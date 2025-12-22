@@ -1,0 +1,9 @@
+## Interface: 11508 
+## Title: Guild Karma
+## Notes: Tracks guild member karma through ++ mentions in guild chat
+## Author: Ghostvox
+## Version: 1.0.0
+## SavedVariables: GuildKarmaDB
+## X-Curse-Project-ID: 1406731
+
+GuildKarma.lua
