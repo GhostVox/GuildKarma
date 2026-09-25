@@ -33,6 +33,8 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - Open with the minimap button or `/gk ui` to browse every guild member's karma
 - Drag the minimap button around the minimap; right-click it to sync
 - Search by name, sort by karma or name, class-colored names with online status
+- Leaderboard places with gold, silver, and bronze for the top three; tied karma shares a place
+- Hide members with 0 karma, and post the top 10 to guild chat with one click
 
 👑 **Guild Leader Management**
 - The guild leader can raise, lower, or set any member's karma from the window

@@ -7,11 +7,25 @@ local FRAME_HEIGHT = 480
 local ROW_HEIGHT = 20
 local CONTENT_WIDTH = FRAME_WIDTH - 52
 local MAX_KARMA = 999999
+local REPORT_COOLDOWN = 10 -- Seconds before "Post Top 10" can be used again
+
+-- Gold, silver, and bronze for the top three places
+local PLACE_COLORS = {
+	{ 1, 0.82, 0 },
+	{ 0.78, 0.8, 0.86 },
+	{ 0.8, 0.5, 0.2 },
+}
 
 local sortByName = false
 local filterText = ""
 local rows = {}
 local ui, content
+
+-- Account-wide settings, loaded from SavedVariables
+local function GetSettings()
+	GuildKarmaSettings = GuildKarmaSettings or {}
+	return GuildKarmaSettings
+end
 
 -- Get the edit box of a StaticPopup across client versions
 local function GetPopupEditBox(popup)
@@ -78,6 +92,12 @@ local function BuildEntries()
 		return {}
 	end
 
+	-- Places come from the whole guild, so they stay put while searching or sorting by name
+	local places = {}
+	for _, entry in ipairs(ns.BuildLeaderboard()) do
+		places[entry.name] = entry.place
+	end
+
 	local entries = {}
 	local seen = {}
 	for i = 1, GetNumGuildMembers() do
@@ -90,6 +110,7 @@ local function BuildEntries()
 					name = ns.ShortName(fullName),
 					key = name,
 					karma = db[name] or 0,
+					place = places[name],
 					rank = rankName,
 					online = online,
 					classFile = classFile,
@@ -100,14 +121,15 @@ local function BuildEntries()
 	end
 	for name, karma in pairs(db) do
 		if not seen[name] and karma > 0 then
-			table.insert(entries, { name = name, key = name, karma = karma, inGuild = false })
+			table.insert(entries, { name = name, key = name, karma = karma, place = places[name], inGuild = false })
 		end
 	end
 
-	if filterText ~= "" then
+	local hideZero = GetSettings().hideZeroKarma
+	if filterText ~= "" or hideZero then
 		local filtered = {}
 		for _, entry in ipairs(entries) do
-			if entry.name:lower():find(filterText, 1, true) then
+			if (not hideZero or entry.karma > 0) and entry.name:lower():find(filterText, 1, true) then
 				table.insert(filtered, entry)
 			end
 		end
@@ -131,6 +153,9 @@ local function ShowRowTooltip(row)
 	end
 	GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
 	GameTooltip:AddLine(entry.name)
+	if entry.place then
+		GameTooltip:AddLine("Leaderboard place: " .. entry.place, 1, 0.82, 0)
+	end
 	if entry.inGuild then
 		GameTooltip:AddLine(entry.rank or "", 1, 1, 1)
 		GameTooltip:AddLine(entry.online and "Online" or "Offline", 0.7, 0.7, 0.7)
@@ -217,7 +242,15 @@ local function Refresh()
 		row.entry = entry
 		totalKarma = totalKarma + entry.karma
 
-		row.position:SetText(sortByName and "" or i .. ".")
+		row.position:SetText(entry.place and entry.place .. "." or "")
+		local placeColor = entry.place and PLACE_COLORS[entry.place]
+		if placeColor then
+			row.position:SetTextColor(placeColor[1], placeColor[2], placeColor[3])
+			row.karma:SetTextColor(placeColor[1], placeColor[2], placeColor[3])
+		else
+			row.position:SetTextColor(0.7, 0.7, 0.7)
+			row.karma:SetTextColor(1, 1, 1)
+		end
 		row.name:SetText(entry.inGuild and entry.name or entry.name .. " (left)")
 		local color = entry.classFile and RAID_CLASS_COLORS[entry.classFile]
 		if not entry.inGuild or not entry.online then
@@ -251,7 +284,7 @@ local function Refresh()
 	if not inGuild then
 		ui.status:SetText("You are not in a guild.")
 	else
-		ui.status:SetText(#entries .. " members  |  " .. totalKarma .. " total karma")
+		ui.status:SetText(#entries .. " shown  |  " .. totalKarma .. " karma")
 	end
 	ui.leaderNote:SetShown(canManage)
 	ui.resetAll:SetShown(canManage)
@@ -305,14 +338,29 @@ local function CreateUI()
 		Refresh()
 	end)
 
-	ui.leaderNote = ui:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	ui.leaderNote:SetPoint("TOPLEFT", 16, -58)
-	ui.leaderNote:SetText("Guild leader: use - / + / Set to edit karma")
+	local hideZero = CreateFrame("CheckButton", nil, ui, "UICheckButtonTemplate")
+	hideZero:SetSize(24, 24)
+	hideZero:SetPoint("TOPLEFT", 14, -54)
+	hideZero:SetChecked(GetSettings().hideZeroKarma)
+	hideZero:SetScript("OnClick", function(self)
+		GetSettings().hideZeroKarma = self:GetChecked() and true or false
+		Refresh()
+	end)
+	local hideZeroLabel = hideZero:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	hideZeroLabel:SetPoint("LEFT", hideZero, "RIGHT", 2, 0)
+	hideZeroLabel:SetText("Hide 0 karma")
+
+	ui.status = ui:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	ui.status:SetPoint("TOPRIGHT", -18, -61)
 
 	-- Scrolling member list
 	local scroll = CreateFrame("ScrollFrame", "GuildKarmaScrollFrame", ui, "UIPanelScrollFrameTemplate")
-	scroll:SetPoint("TOPLEFT", 12, -74)
-	scroll:SetPoint("BOTTOMRIGHT", -34, 42)
+	scroll:SetPoint("TOPLEFT", 12, -82)
+	scroll:SetPoint("BOTTOMRIGHT", -34, 56)
+
+	ui.leaderNote = ui:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	ui.leaderNote:SetPoint("BOTTOMLEFT", 16, 40)
+	ui.leaderNote:SetText("Guild leader: use - / + / Set to edit karma")
 	content = CreateFrame("Frame", nil, scroll)
 	content:SetSize(CONTENT_WIDTH, 1)
 	scroll:SetScrollChild(content)
@@ -325,6 +373,19 @@ local function CreateUI()
 		ns.RequestSync()
 	end)
 
+	local report = CreateFrame("Button", nil, ui, "UIPanelButtonTemplate")
+	report:SetSize(100, 22)
+	report:SetPoint("LEFT", sync, "RIGHT", 6, 0)
+	report:SetText("Post Top 10")
+	report:SetScript("OnClick", function(self)
+		ns.ReportTop10()
+		-- Brief cooldown so the leaderboard can't be spammed into guild chat
+		self:Disable()
+		C_Timer.After(REPORT_COOLDOWN, function()
+			self:Enable()
+		end)
+	end)
+
 	ui.resetAll = CreateFrame("Button", nil, ui, "UIPanelButtonTemplate")
 	ui.resetAll:SetSize(90, 22)
 	ui.resetAll:SetPoint("BOTTOMRIGHT", -12, 12)
@@ -332,9 +393,6 @@ local function CreateUI()
 	ui.resetAll:SetScript("OnClick", function()
 		StaticPopup_Show("GUILDKARMA_RESET_ALL")
 	end)
-
-	ui.status = ui:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	ui.status:SetPoint("BOTTOM", 0, 18)
 end
 
 function ns.ToggleUI()

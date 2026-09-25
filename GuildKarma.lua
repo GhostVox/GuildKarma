@@ -529,6 +529,62 @@ frame:SetScript("OnEvent", OnEvent)
 -- Register addon message prefix for syncing
 C_ChatInfo.RegisterAddonMessagePrefix(SYNC_PREFIX)
 
+-- Karma holders sorted highest first, each with a place. Tied karma shares
+-- a place (1, 2, 2, 4); players with no karma aren't ranked.
+local function BuildLeaderboard()
+	local guildName = InitializeGuildDB()
+	if not guildName then
+		return {}
+	end
+
+	local leaderboard = {}
+	for name, karma in pairs(GuildKarmaDB[guildName]) do
+		if karma > 0 then
+			table.insert(leaderboard, { name = name, karma = karma })
+		end
+	end
+
+	table.sort(leaderboard, function(a, b)
+		if a.karma ~= b.karma then
+			return a.karma > b.karma
+		end
+		return a.name < b.name
+	end)
+
+	for i, entry in ipairs(leaderboard) do
+		local previous = leaderboard[i - 1]
+		entry.place = (previous and previous.karma == entry.karma) and previous.place or i
+	end
+
+	return leaderboard
+end
+
+-- Post the top 10 karma holders to guild chat
+local function ReportTop10()
+	if not InitializeGuildDB() then
+		Print("You must be in a guild to use this addon.")
+		return
+	end
+
+	local leaderboard = BuildLeaderboard()
+	if #leaderboard == 0 then
+		SendChat("No karma recorded yet!", "GUILD")
+		return
+	end
+
+	-- Send header immediately
+	SendChat("=== Top 10 Karma Holders ===", "GUILD")
+
+	-- Send each entry with a 0.5 second delay
+	local delay = 0.5
+	for i = 1, math.min(10, #leaderboard) do
+		local entry = leaderboard[i]
+		C_Timer.After(delay * i, function()
+			SendChat(entry.place .. ". " .. entry.name .. ": " .. entry.karma, "GUILD")
+		end)
+	end
+end
+
 -- Slash command to show karma
 local function ShowKarma(playerName)
 	local guildName = InitializeGuildDB()
@@ -544,22 +600,15 @@ local function ShowKarma(playerName)
 		Print(playerName .. " has " .. karma .. " karma.")
 	else
 		-- Show top 10 karma holders
-		local karmaList = {}
-		for name, karma in pairs(GuildKarmaDB[guildName]) do
-			table.insert(karmaList, { name = name, karma = karma })
-		end
-
-		-- Sort by karma (descending)
-		table.sort(karmaList, function(a, b)
-			return a.karma > b.karma
-		end)
+		local leaderboard = BuildLeaderboard()
 
 		Print("Top Karma Holders:")
-		for i = 1, math.min(10, #karmaList) do
-			print("  " .. i .. ". " .. karmaList[i].name .. ": " .. karmaList[i].karma)
+		for i = 1, math.min(10, #leaderboard) do
+			local entry = leaderboard[i]
+			print("  " .. entry.place .. ". " .. entry.name .. ": " .. entry.karma)
 		end
 
-		if #karmaList == 0 then
+		if #leaderboard == 0 then
 			Print("No karma recorded yet!")
 		end
 	end
@@ -613,38 +662,7 @@ local function SlashCommandHandler(msg)
 			-- Report specific player to guild chat
 			ReportKarma(playerName)
 		else
-			-- Report top 10 to guild chat with delays
-			local guildName = InitializeGuildDB()
-			if not guildName then
-				Print("You must be in a guild to use this addon.")
-				return
-			end
-
-			local karmaList = {}
-			for name, karma in pairs(GuildKarmaDB[guildName]) do
-				table.insert(karmaList, { name = name, karma = karma })
-			end
-
-			-- Sort by karma (descending)
-			table.sort(karmaList, function(a, b)
-				return a.karma > b.karma
-			end)
-
-			if #karmaList == 0 then
-				SendChat("No karma recorded yet!", "GUILD")
-				return
-			end
-
-			-- Send header immediately
-			SendChat("=== Top 10 Karma Holders ===", "GUILD")
-
-			-- Send each entry with a 0.5 second delay
-			local delay = 0.5
-			for i = 1, math.min(10, #karmaList) do
-				C_Timer.After(delay * i, function()
-					SendChat(i .. ". " .. karmaList[i].name .. ": " .. karmaList[i].karma, "GUILD")
-				end)
-			end
+			ReportTop10()
 		end
 	else
 		ShowKarma(msg)
@@ -665,6 +683,8 @@ ns.RequestSync = RequestSync
 ns.CanManage = CanManage
 ns.SetKarma = SetKarma
 ns.ResetAllKarma = ResetAllKarma
+ns.BuildLeaderboard = BuildLeaderboard
+ns.ReportTop10 = ReportTop10
 
 -- Karma table for the current guild, or nil when not in a guild
 function ns.GetGuildDB()
