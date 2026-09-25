@@ -29,6 +29,16 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - Keeps the highest karma values to prevent data loss
 - Perfect for catching up after being offline
 
+🪟 **Karma Window**
+- Open with the minimap button or `/gk ui` to browse every guild member's karma
+- Drag the minimap button around the minimap; right-click it to sync
+- Search by name, sort by karma or name, class-colored names with online status
+
+👑 **Guild Leader Management**
+- The guild leader can raise, lower, or set any member's karma from the window
+- Reset karma for the whole guild with one click
+- Leader edits and resets sync to every addon user, including those who were offline
+
 💬 **Clean Chat Integration**
 - Recipients automatically announce their new karma total
 - No spam - single announcements only
@@ -37,13 +47,15 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 ## Commands
 
 **Slash Commands:**
+- `/gk ui` - Open the karma window
+- `/gk minimap` - Show or hide the minimap button
 - `/gk` - View top 10 karma holders (private)
 - `/gk PlayerName` - Check specific player's karma (private)
 - `/gk report` - Post top 10 to guild chat (public)
 - `/gk report PlayerName` - Post specific player's karma to guild chat (public)
 - `/gk sync` - Request karma sync from other addon users
 - `/gk debug PlayerName` - Test if a name is in guild roster
-- `/gk reset` - Reset all karma data (use with caution!)
+- `/gk reset` - Reset all karma for the guild (guild leader only)
 - `/gk help` - Show all commands
 
 **Guild Chat Triggers:**

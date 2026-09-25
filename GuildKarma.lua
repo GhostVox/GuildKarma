@@ -1,19 +1,26 @@
 -- GuildKarma: Tracks guild member karma through ++ mentions
 
 -- Initialize addon
-local addonName = "GuildKarma"
-local GuildKarma = {}
+local addonName, ns = ...
 
 -- Database initialization
 GuildKarmaDB = GuildKarmaDB or {}
+-- Per guild: rev[name] = server time of the guild leader's last edit to that entry,
+-- resetRev = server time of the last guild-wide reset. Newer revisions win on sync.
+GuildKarmaMetaDB = GuildKarmaMetaDB or {}
 
 -- Sync control variables
 local SYNC_PREFIX = "GuildKarmaSync"
 local MAX_ADDON_MSG = 255 -- Hard limit on addon message length (bytes)
 local CHUNK_INTERVAL = 1 -- Seconds between data chunks, to stay under the addon message throttle
 local SYNC_WINDOW = 5 -- Seconds of silence before a sync is considered complete
+local EDIT_FLUSH_DELAY = 1 -- Seconds to batch leader edits before broadcasting them
 local isSyncing = false
 local syncTimeout = nil
+
+-- Leader edits waiting to be broadcast, keyed by player name
+local pendingEdits = {}
+local editFlushTimer = nil
 
 -- Lowercased short names of guild members seen running the addon this session
 local addonUsers = {}
@@ -56,7 +63,23 @@ local function InitializeGuildDB()
 	end
 
 	GuildKarmaDB[guildName] = GuildKarmaDB[guildName] or {}
+	GuildKarmaMetaDB[guildName] = GuildKarmaMetaDB[guildName] or {}
+	GuildKarmaMetaDB[guildName].rev = GuildKarmaMetaDB[guildName].rev or {}
+	GuildKarmaMetaDB[guildName].resetRev = GuildKarmaMetaDB[guildName].resetRev or 0
 	return guildName
+end
+
+-- Normalize a player name: remove server name, capitalize first letter
+local function NormalizeName(playerName)
+	playerName = playerName:gsub("%-.*", "")
+	return playerName:sub(1, 1):upper() .. playerName:sub(2):lower()
+end
+
+-- Let the UI know karma data or the roster changed
+local function NotifyChanged()
+	if ns.OnDataChanged then
+		ns.OnDataChanged()
+	end
 end
 
 -- Add karma to a player
@@ -66,12 +89,17 @@ local function AddKarma(playerName, shouldAnnounce)
 		return
 	end
 
-	-- Normalize the player name (remove server name if present, capitalize first letter)
-	playerName = playerName:gsub("%-.*", "") -- Remove server name
-	playerName = playerName:sub(1, 1):upper() .. playerName:sub(2):lower()
+	playerName = NormalizeName(playerName)
 
-	-- Initialize player if not exists
-	GuildKarmaDB[guildName][playerName] = GuildKarmaDB[guildName][playerName] or 0
+	-- Initialize player if not exists. New entries date from the last reset,
+	-- so they survive it if the reset reaches us again.
+	if not GuildKarmaDB[guildName][playerName] then
+		GuildKarmaDB[guildName][playerName] = 0
+		local meta = GuildKarmaMetaDB[guildName]
+		if meta.resetRev > 0 then
+			meta.rev[playerName] = meta.resetRev
+		end
+	end
 
 	-- Add karma
 	GuildKarmaDB[guildName][playerName] = GuildKarmaDB[guildName][playerName] + 1
@@ -82,6 +110,8 @@ local function AddKarma(playerName, shouldAnnounce)
 	if shouldAnnounce then
 		SendChat("I now have " .. newKarma .. " karma!", "GUILD")
 	end
+
+	NotifyChanged()
 end
 
 -- Check if a player is in the guild
@@ -111,9 +141,7 @@ local function ReportKarma(playerName)
 		return
 	end
 
-	-- Normalize the player name
-	playerName = playerName:gsub("%-.*", "")
-	playerName = playerName:sub(1, 1):upper() .. playerName:sub(2):lower()
+	playerName = NormalizeName(playerName)
 
 	local karma = GuildKarmaDB[guildName][playerName] or 0
 	SendChat(playerName .. " has " .. karma .. " karma!", "GUILD")
@@ -155,18 +183,24 @@ local function IsResponder(sender)
 	return leader == myKey
 end
 
--- Split karma data into "name:karma,..." chunks that fit in one addon message
-local function SerializeKarmaChunks()
+-- Split karma data into "name:karma[:rev],..." chunks that fit in one addon message.
+-- Older clients read only "name:karma" and ignore the revision.
+local function SerializeKarmaChunks(names)
 	local guildName = InitializeGuildDB()
 	if not guildName then
 		return {}
 	end
 
+	local db = GuildKarmaDB[guildName]
+	local revs = GuildKarmaMetaDB[guildName].rev
 	local chunks = {}
 	local current = ""
 	local maxPayload = MAX_ADDON_MSG - #"DATA:"
-	for name, karma in pairs(GuildKarmaDB[guildName]) do
-		local entry = name .. ":" .. karma
+	for name in pairs(names or db) do
+		local entry = name .. ":" .. (db[name] or 0)
+		if revs[name] then
+			entry = entry .. ":" .. revs[name]
+		end
 		if current == "" then
 			current = entry
 		elseif #current + 1 + #entry > maxPayload then
@@ -183,31 +217,129 @@ local function SerializeKarmaChunks()
 	return chunks
 end
 
--- Merge received karma data with local data (keeping highest values)
+-- Merge received karma data with local data. The entry with the newer leader
+-- revision wins; with equal revisions the highest karma wins. Entries older than
+-- the last guild-wide reset are dropped.
 local function MergeKarmaData(receivedData)
 	local guildName = InitializeGuildDB()
 	if not guildName then
-		return
+		return 0
 	end
 
+	local db = GuildKarmaDB[guildName]
+	local meta = GuildKarmaMetaDB[guildName]
 	local updatedCount = 0
 
 	-- Parse received data
 	for entry in receivedData:gmatch("[^,]+") do
-		local name, karma = entry:match("([^:]+):(%d+)")
-		if name and karma then
+		local name, karma, rev = entry:match("^([^:]+):(%d+):?(%d*)$")
+		if name then
 			karma = tonumber(karma)
-			local currentKarma = GuildKarmaDB[guildName][name] or 0
+			rev = tonumber(rev) or 0
+			local currentKarma = db[name]
+			local currentRev = meta.rev[name] or 0
 
-			-- Keep the highest karma value
-			if karma > currentKarma then
-				GuildKarmaDB[guildName][name] = karma
-				updatedCount = updatedCount + 1
+			if rev >= meta.resetRev then
+				if currentKarma == nil or rev > currentRev or (rev == currentRev and karma > currentKarma) then
+					if karma ~= currentKarma then
+						updatedCount = updatedCount + 1
+					end
+					db[name] = karma
+					meta.rev[name] = rev > 0 and rev or nil
+				end
 			end
 		end
 	end
 
+	if updatedCount > 0 then
+		NotifyChanged()
+	end
 	return updatedCount
+end
+
+-- Apply a guild-wide reset made at server time resetRev, dropping every entry
+-- the guild leader hasn't edited since. Returns true if it was new to us.
+local function ApplyReset(resetRev)
+	local guildName = InitializeGuildDB()
+	if not guildName then
+		return false
+	end
+
+	local db = GuildKarmaDB[guildName]
+	local meta = GuildKarmaMetaDB[guildName]
+	if resetRev <= meta.resetRev then
+		return false
+	end
+
+	for name in pairs(db) do
+		if (meta.rev[name] or 0) < resetRev then
+			db[name] = nil
+			meta.rev[name] = nil
+		end
+	end
+	meta.resetRev = resetRev
+
+	NotifyChanged()
+	return true
+end
+
+-- A revision newer than both the clock and the last one, so edits always win
+local function NextRev(lastRev)
+	return math.max(GetServerTime(), (lastRev or 0) + 1)
+end
+
+-- Only the guild leader can manage karma
+local function CanManage()
+	return IsInGuild() and IsGuildLeader()
+end
+
+-- Send batched leader edits to other addon users
+local function FlushEdits()
+	editFlushTimer = nil
+	local chunks = SerializeKarmaChunks(pendingEdits)
+	pendingEdits = {}
+	for i, chunk in ipairs(chunks) do
+		C_Timer.After((i - 1) * CHUNK_INTERVAL, function()
+			C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "DATA:" .. chunk, "GUILD")
+		end)
+	end
+end
+
+-- Guild leader: set a player's karma to an exact value
+local function SetKarma(playerName, value)
+	local guildName = InitializeGuildDB()
+	if not guildName or not CanManage() then
+		return
+	end
+
+	playerName = NormalizeName(playerName)
+	value = math.max(0, math.floor(value))
+
+	local meta = GuildKarmaMetaDB[guildName]
+	GuildKarmaDB[guildName][playerName] = value
+	meta.rev[playerName] = NextRev(meta.rev[playerName])
+
+	-- Batch rapid edits (e.g. clicking + repeatedly) to stay under the message throttle
+	pendingEdits[playerName] = true
+	if not editFlushTimer then
+		editFlushTimer = C_Timer.NewTimer(EDIT_FLUSH_DELAY, FlushEdits)
+	end
+
+	NotifyChanged()
+end
+
+-- Guild leader: reset karma for the whole guild
+local function ResetAllKarma()
+	local guildName = InitializeGuildDB()
+	if not guildName or not CanManage() then
+		return
+	end
+
+	local resetRev = NextRev(GuildKarmaMetaDB[guildName].resetRev)
+	ApplyReset(resetRev)
+	pendingEdits = {}
+	C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "RESET:" .. resetRev, "GUILD")
+	Print("All karma has been reset!")
 end
 
 -- (Re)start the timer that ends the sync window once data stops arriving
@@ -243,14 +375,27 @@ end
 -- Respond to sync request by sending our karma data, spread over several
 -- messages if needed. Always send something so the requester learns we run the addon.
 local function RespondToSyncRequest()
+	local guildName = InitializeGuildDB()
+	if not guildName then
+		return
+	end
+
+	-- Pass on the last reset first, so peers drop stale entries
+	local resetRev = GuildKarmaMetaDB[guildName].resetRev
+	if resetRev > 0 then
+		C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "RESET:" .. resetRev, "GUILD")
+	end
+
 	local chunks = SerializeKarmaChunks()
 	if #chunks == 0 then
-		C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "HELLO", "GUILD")
+		if resetRev == 0 then
+			C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "HELLO", "GUILD")
+		end
 		return
 	end
 
 	for i, chunk in ipairs(chunks) do
-		C_Timer.After((i - 1) * CHUNK_INTERVAL, function()
+		C_Timer.After((resetRev > 0 and i or i - 1) * CHUNK_INTERVAL, function()
 			C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "DATA:" .. chunk, "GUILD")
 		end)
 	end
@@ -340,7 +485,7 @@ local function OnEvent(self, event, ...)
 		end
 		ParseMessage(message, sender)
 	elseif event == "GUILD_ROSTER_UPDATE" then
-		-- Guild roster has been updated
+		NotifyChanged()
 	elseif event == "CHAT_MSG_ADDON" then
 		local prefix, message, channel, sender = ...
 
@@ -352,16 +497,21 @@ local function OnEvent(self, event, ...)
 				RespondToSyncRequest()
 			elseif message:match("^DATA:") then
 				-- Received karma data from another guild member. Merging is
-				-- always safe (highest value wins), so do it even outside our own sync.
+				-- always safe (newest revision wins), so do it even outside our own sync.
 				local data = message:match("^DATA:(.+)$")
 				if data then
-					local updates = MergeKarmaData(data) or 0
+					local updates = MergeKarmaData(data)
 					if isSyncing then
 						if updates > 0 then
 							Print("Updated " .. updates .. " karma entries from " .. sender)
 						end
 						ExtendSyncWindow()
 					end
+				end
+			elseif message:match("^RESET:%d+$") then
+				-- The guild leader reset all karma
+				if ApplyReset(tonumber(message:match("^RESET:(%d+)$"))) then
+					Print("All karma was reset by the guild leader.")
 				end
 			end
 		end
@@ -389,7 +539,7 @@ local function ShowKarma(playerName)
 
 	if playerName and playerName ~= "" then
 		-- Show specific player's karma
-		playerName = playerName:sub(1, 1):upper() .. playerName:sub(2):lower()
+		playerName = NormalizeName(playerName)
 		local karma = GuildKarmaDB[guildName][playerName] or 0
 		Print(playerName .. " has " .. karma .. " karma.")
 	else
@@ -421,20 +571,26 @@ local function SlashCommandHandler(msg)
 
 	if msg == "help" then
 		Print("Commands:")
+		print("  /gk ui - Open the karma window")
+		print("  /gk minimap - Show or hide the minimap button")
 		print("  /gk - Show top 10 karma holders")
 		print("  /gk <playername> - Show karma for specific player")
 		print("  /gk report - Report top 10 to guild chat")
 		print("  /gk report <playername> - Report specific player's karma to guild chat")
 		print("  /gk sync - Sync karma data with other guild members")
 		print("  /gk debug <name> - Test if a name is found in guild roster")
-		print("  /gk reset - Reset all karma (use with caution!)")
+		print("  /gk reset - Reset all karma for the guild (guild leader only)")
 		print("Guild members can type 'guildkarma' in guild chat to check their karma")
 		print("Guild members can type 'gk update' in guild chat to trigger a sync")
+	elseif msg == "ui" then
+		ns.ToggleUI()
+	elseif msg == "minimap" then
+		ns.ToggleMinimapButton()
 	elseif msg == "reset" then
-		local guildName = InitializeGuildDB()
-		if guildName then
-			GuildKarmaDB[guildName] = {}
-			Print("All karma has been reset!")
+		if CanManage() then
+			ResetAllKarma()
+		else
+			Print("Only the guild leader can reset karma.")
 		end
 	elseif msg == "sync" then
 		RequestSync()
@@ -499,3 +655,19 @@ end
 SLASH_GUILDKARMA1 = "/guildkarma"
 SLASH_GUILDKARMA2 = "/gk"
 SlashCmdList["GUILDKARMA"] = SlashCommandHandler
+
+-- Shared with GuildKarmaUI.lua
+ns.Print = Print
+ns.NormalizeName = NormalizeName
+ns.ShortName = ShortName
+ns.RequestGuildRoster = RequestGuildRoster
+ns.RequestSync = RequestSync
+ns.CanManage = CanManage
+ns.SetKarma = SetKarma
+ns.ResetAllKarma = ResetAllKarma
+
+-- Karma table for the current guild, or nil when not in a guild
+function ns.GetGuildDB()
+	local guildName = InitializeGuildDB()
+	return guildName and GuildKarmaDB[guildName]
+end

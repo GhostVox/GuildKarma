@@ -3,7 +3,10 @@
 ## Notes: Tracks guild member karma through ++ mentions in guild chat
 ## Author: Ghostvox
 ## Version: 1.1.0
-## SavedVariables: GuildKarmaDB
+## IconTexture: Interface\Icons\Spell_Holy_GreaterBlessingofKings
+## SavedVariables: GuildKarmaDB, GuildKarmaMetaDB, GuildKarmaSettings
 ## X-Curse-Project-ID: 1406731
 
 GuildKarma.lua
+GuildKarmaUI.lua
+GuildKarmaMinimap.lua
