@@ -74,7 +74,7 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 
 ## Notes
 
-- Works on Classic Era, Season of Discovery, Cataclysm Classic, and Retail
+- Works on Retail (Midnight), Mists of Pandaria Classic, Cataclysm Classic, Titan Reforged, Burning Crusade Anniversary, Forever, and Classic Era / Season of Discovery
 - Data is stored per-guild (multi-guild support)
 - Sync feature requires at least 2 people with the addon
 - More users = better coverage and more accurate karma tracking

@@ -9,8 +9,14 @@ GuildKarmaDB = GuildKarmaDB or {}
 
 -- Sync control variables
 local SYNC_PREFIX = "GuildKarmaSync"
+local MAX_ADDON_MSG = 255 -- Hard limit on addon message length (bytes)
+local CHUNK_INTERVAL = 1 -- Seconds between data chunks, to stay under the addon message throttle
+local SYNC_WINDOW = 5 -- Seconds of silence before a sync is considered complete
 local isSyncing = false
 local syncTimeout = nil
+
+-- Lowercased short names of guild members seen running the addon this session
+local addonUsers = {}
 
 -- Frame for event handling
 local frame = CreateFrame("Frame")
@@ -18,6 +24,28 @@ local frame = CreateFrame("Frame")
 -- Print helper function
 local function Print(msg)
 	print("|cff00ff00[GuildKarma]|r " .. msg)
+end
+
+-- Send a chat message, using whichever API this client provides.
+-- Skipped during retail's chat lockdown (boss encounters), where sending fails.
+local function SendChat(msg, chatType)
+	if C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown() then
+		return
+	end
+	if C_ChatInfo.SendChatMessage then
+		C_ChatInfo.SendChatMessage(msg, chatType)
+	else
+		SendChatMessage(msg, chatType)
+	end
+end
+
+-- Request a guild roster update, using whichever API this client provides
+local function RequestGuildRoster()
+	if C_GuildInfo and C_GuildInfo.GuildRoster then
+		C_GuildInfo.GuildRoster()
+	else
+		GuildRoster()
+	end
 end
 
 -- Initialize the database for the current guild
@@ -52,7 +80,7 @@ local function AddKarma(playerName, shouldAnnounce)
 
 	-- Only announce if this is OUR character receiving karma
 	if shouldAnnounce then
-		SendChatMessage("I now have " .. newKarma .. " karma!", "GUILD")
+		SendChat("I now have " .. newKarma .. " karma!", "GUILD")
 	end
 end
 
@@ -88,22 +116,71 @@ local function ReportKarma(playerName)
 	playerName = playerName:sub(1, 1):upper() .. playerName:sub(2):lower()
 
 	local karma = GuildKarmaDB[guildName][playerName] or 0
-	SendChatMessage(playerName .. " has " .. karma .. " karma!", "GUILD")
+	SendChat(playerName .. " has " .. karma .. " karma!", "GUILD")
 end
 
--- Serialize karma data for transmission
-local function SerializeKarmaData()
+-- Strip the server name from a player name
+local function ShortName(name)
+	return (name:gsub("%-.*", ""))
+end
+
+-- Check whether a guild member (lowercased short name) is currently online
+local function IsOnline(key)
+	for i = 1, GetNumGuildMembers() do
+		local name, _, _, _, _, _, _, _, online = GetGuildRosterInfo(i)
+		if name and ShortName(name):lower() == key then
+			return online
+		end
+	end
+	return false
+end
+
+-- Decide whether this client should handle a guild chat trigger, so only one
+-- addon user responds. If the sender runs the addon, their own client responds;
+-- otherwise the online addon user whose name sorts first responds.
+local function IsResponder(sender)
+	local senderKey = ShortName(sender):lower()
+	local myKey = UnitName("player"):lower()
+
+	if addonUsers[senderKey] then
+		return senderKey == myKey
+	end
+
+	local leader = myKey
+	for key in pairs(addonUsers) do
+		if key < leader and IsOnline(key) then
+			leader = key
+		end
+	end
+	return leader == myKey
+end
+
+-- Split karma data into "name:karma,..." chunks that fit in one addon message
+local function SerializeKarmaChunks()
 	local guildName = InitializeGuildDB()
 	if not guildName then
-		return ""
+		return {}
 	end
 
-	local data = {}
+	local chunks = {}
+	local current = ""
+	local maxPayload = MAX_ADDON_MSG - #"DATA:"
 	for name, karma in pairs(GuildKarmaDB[guildName]) do
-		table.insert(data, name .. ":" .. karma)
+		local entry = name .. ":" .. karma
+		if current == "" then
+			current = entry
+		elseif #current + 1 + #entry > maxPayload then
+			table.insert(chunks, current)
+			current = entry
+		else
+			current = current .. "," .. entry
+		end
+	end
+	if current ~= "" then
+		table.insert(chunks, current)
 	end
 
-	return table.concat(data, ",")
+	return chunks
 end
 
 -- Merge received karma data with local data (keeping highest values)
@@ -133,8 +210,21 @@ local function MergeKarmaData(receivedData)
 	return updatedCount
 end
 
--- Request karma sync from guild members
-local function RequestSync()
+-- (Re)start the timer that ends the sync window once data stops arriving
+local function ExtendSyncWindow()
+	if syncTimeout then
+		syncTimeout:Cancel()
+	end
+	syncTimeout = C_Timer.NewTimer(SYNC_WINDOW, function()
+		isSyncing = false
+		syncTimeout = nil
+		Print("Sync complete!")
+	end)
+end
+
+-- Start a karma sync. When sendRequest is false, only listen for the data
+-- that another addon user's request will trigger.
+local function RequestSync(sendRequest)
 	if isSyncing then
 		Print("Sync already in progress...")
 		return
@@ -143,21 +233,26 @@ local function RequestSync()
 	isSyncing = true
 	Print("Requesting karma data from guild members...")
 
-	-- Send sync request to guild
-	C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "REQUEST", "GUILD")
+	if sendRequest ~= false then
+		C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "REQUEST", "GUILD")
+	end
 
-	-- Set timeout to end sync after 5 seconds
-	syncTimeout = C_Timer.NewTimer(5, function()
-		isSyncing = false
-		Print("Sync complete!")
-	end)
+	ExtendSyncWindow()
 end
 
--- Respond to sync request by sending our karma data
+-- Respond to sync request by sending our karma data, spread over several
+-- messages if needed. Always send something so the requester learns we run the addon.
 local function RespondToSyncRequest()
-	local data = SerializeKarmaData()
-	if data ~= "" then
-		C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "DATA:" .. data, "GUILD")
+	local chunks = SerializeKarmaChunks()
+	if #chunks == 0 then
+		C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "HELLO", "GUILD")
+		return
+	end
+
+	for i, chunk in ipairs(chunks) do
+		C_Timer.After((i - 1) * CHUNK_INTERVAL, function()
+			C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "DATA:" .. chunk, "GUILD")
+		end)
 	end
 end
 
@@ -166,7 +261,8 @@ local function ParseMessage(message, sender)
 	-- Check if someone is requesting a sync
 	local lowerMessage = message:lower()
 	if lowerMessage == "gk update" or lowerMessage == "!gk update" then
-		RequestSync()
+		-- One client sends the request; everyone merges the responses
+		RequestSync(IsResponder(sender))
 		return
 	end
 
@@ -177,9 +273,9 @@ local function ParseMessage(message, sender)
 		or lowerMessage == "!karma"
 		or lowerMessage == "karma"
 	then
-		-- Remove server name from sender if present
-		local senderName = sender:gsub("%-.*", "")
-		ReportKarma(senderName)
+		if IsResponder(sender) then
+			ReportKarma(ShortName(sender))
+		end
 		return
 	end
 
@@ -220,7 +316,8 @@ local function OnEvent(self, event, ...)
 		local loadedAddon = ...
 		if loadedAddon == addonName then
 			Print("Loaded! Use /gk or /guildkarma for commands.")
-			GuildRoster() -- Request guild roster update
+			addonUsers[UnitName("player"):lower()] = true
+			RequestGuildRoster()
 		end
 	elseif event == "PLAYER_ENTERING_WORLD" then
 		local isLogin, isReload = ...
@@ -237,6 +334,10 @@ local function OnEvent(self, event, ...)
 		end
 	elseif event == "CHAT_MSG_GUILD" then
 		local message, sender = ...
+		-- Retail can hide chat contents from addons; skip what we can't read
+		if issecretvalue and (issecretvalue(message) or issecretvalue(sender)) then
+			return
+		end
 		ParseMessage(message, sender)
 	elseif event == "GUILD_ROSTER_UPDATE" then
 		-- Guild roster has been updated
@@ -244,18 +345,22 @@ local function OnEvent(self, event, ...)
 		local prefix, message, channel, sender = ...
 
 		if prefix == SYNC_PREFIX and channel == "GUILD" then
+			addonUsers[ShortName(sender):lower()] = true
+
 			if message == "REQUEST" then
 				-- Someone is requesting karma data
 				RespondToSyncRequest()
 			elseif message:match("^DATA:") then
-				-- Received karma data from another guild member
-				if isSyncing then
-					local data = message:match("^DATA:(.+)$")
-					if data then
-						local updates = MergeKarmaData(data)
+				-- Received karma data from another guild member. Merging is
+				-- always safe (highest value wins), so do it even outside our own sync.
+				local data = message:match("^DATA:(.+)$")
+				if data then
+					local updates = MergeKarmaData(data) or 0
+					if isSyncing then
 						if updates > 0 then
 							Print("Updated " .. updates .. " karma entries from " .. sender)
 						end
+						ExtendSyncWindow()
 					end
 				end
 			end
@@ -370,18 +475,18 @@ local function SlashCommandHandler(msg)
 			end)
 
 			if #karmaList == 0 then
-				SendChatMessage("No karma recorded yet!", "GUILD")
+				SendChat("No karma recorded yet!", "GUILD")
 				return
 			end
 
 			-- Send header immediately
-			SendChatMessage("=== Top 10 Karma Holders ===", "GUILD")
+			SendChat("=== Top 10 Karma Holders ===", "GUILD")
 
 			-- Send each entry with a 0.5 second delay
 			local delay = 0.5
 			for i = 1, math.min(10, #karmaList) do
 				C_Timer.After(delay * i, function()
-					SendChatMessage(i .. ". " .. karmaList[i].name .. ": " .. karmaList[i].karma, "GUILD")
+					SendChat(i .. ". " .. karmaList[i].name .. ": " .. karmaList[i].karma, "GUILD")
 				end)
 			end
 		end
