@@ -34,7 +34,8 @@ local function GetProfessionDB()
 	return meta.professions
 end
 
--- Read the player's own professions, sorted by name
+-- Read the player's own professions, sorted by name. Some classic-era clients have
+-- GetProfessions but it returns nothing, so fall back to the skill list.
 local function ReadOwnProfessions()
 	local list = {}
 	if GetProfessions and GetProfessionInfo then
@@ -47,7 +48,8 @@ local function ReadOwnProfessions()
 				end
 			end
 		end
-	elseif GetNumSkillLines and GetSkillLineInfo then
+	end
+	if #list == 0 and GetNumSkillLines and GetSkillLineInfo then
 		-- Professions sit under the "Professions" and "Secondary Skills" headers
 		local header
 		for i = 1, GetNumSkillLines() do
@@ -126,11 +128,11 @@ local function UpdateOwnProfessions(forceSend)
 end
 
 -- Share our professions shortly after skills change, batching bursts of updates
-local function ScheduleUpdate()
+local function ScheduleUpdate(delay)
 	if broadcastTimer then
 		broadcastTimer:Cancel()
 	end
-	broadcastTimer = C_Timer.NewTimer(BROADCAST_DELAY, function()
+	broadcastTimer = C_Timer.NewTimer(delay or BROADCAST_DELAY, function()
 		broadcastTimer = nil
 		UpdateOwnProfessions(false)
 	end)
@@ -213,8 +215,8 @@ end
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("SKILL_LINES_CHANGED")
-frame:SetScript("OnEvent", function(self, event, isLogin)
-	if event == "SKILL_LINES_CHANGED" or isLogin then
+frame:SetScript("OnEvent", function(self, event, isLogin, isReload)
+	if event == "SKILL_LINES_CHANGED" or isLogin or isReload then
 		ScheduleUpdate()
 	end
 end)
@@ -342,6 +344,12 @@ ns.AddTab("Professions", function(parent)
 	page.empty = page:CreateFontString(nil, "OVERLAY", "GameFontDisable")
 	page.empty:SetPoint("TOP", scroll, "TOP", 0, -40)
 	page.empty:SetText("No professions shared yet.")
+
+	-- Check our own professions whenever the tab opens
+	page:SetScript("OnShow", function()
+		ScheduleUpdate(0)
+	end)
+	ScheduleUpdate(0)
 
 	page.Refresh = RefreshProfessions
 	return page

@@ -441,6 +441,34 @@ test("members share professions and everyone sees them grouped", function()
 	eq(ProfessionMembers(world, "Ghostvox", "Swords"), nil, "non-profession skills are left out")
 end)
 
+test("professions are read after a /reload", function()
+	local world = NewGuild()
+	world.members["Cut Loss"].professions = { { "Mining", 75, 150 } }
+	world:Fire(world.clients["Cut Loss"], "PLAYER_ENTERING_WORLD", false, true)
+	world:Advance(10)
+
+	eq(ProfessionMembers(world, "Vrani", "Mining"), "Cut Loss 75/150")
+end)
+
+test("professions are read when the tab opens", function()
+	local world = NewGuild()
+	world.members["Cut Loss"].professions = { { "Mining", 75, 150 } }
+	world.clients["Cut Loss"].ns.ShowTab("Professions")
+	world:Advance(1)
+
+	eq(ProfessionMembers(world, "Cut Loss", "Mining"), "Cut Loss 75/150")
+end)
+
+test("the skill list is used when GetProfessions returns nothing", function()
+	local world = NewGuild()
+	local env = world.clients["Cut Loss"].env
+	env.GetProfessions = function() end
+	env.GetProfessionInfo = function() end
+	LearnProfessions(world, "Cut Loss", { { "Skinning", 40, 75 } })
+
+	eq(ProfessionMembers(world, "Ghostvox", "Skinning"), "Cut Loss 40/75")
+end)
+
 test("skill-ups replace the old professions", function()
 	local world = NewGuild()
 	LearnProfessions(world, "Cut Loss", { { "Alchemy", 250, 300 } })
