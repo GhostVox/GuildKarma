@@ -393,6 +393,19 @@ test("/gk history prints recent karma with reasons", function()
 	ok(log:find("Vrani %-> Polyphia %(1m ago%): for the heals"), "history line missing:\n" .. log)
 end)
 
+test("/gk simulate gives karma locally without posting to guild chat", function()
+	local world = NewGuild()
+	world:Slash("Cut Loss", "simulate vrani: Cut Loss++ for testing")
+	world:Slash("Cut Loss", "simulate Vrani: gk update")
+	world:Flush()
+
+	eq(world:Karma("Cut Loss", "Cut Loss"), 1, "simulated karma")
+	eq(world:Events("Cut Loss")[1].reason, "for testing")
+	eq(world:Events("Cut Loss")[1].from, "Vrani")
+	eq(#world.chat, 0, "nothing posted to guild chat")
+	eq(world:Karma("Vrani", "Cut Loss"), 0, "other clients don't hear it")
+end)
+
 ---------------------------------------------------------------------------
 -- UI and tooltips
 ---------------------------------------------------------------------------

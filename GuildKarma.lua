@@ -612,10 +612,14 @@ local function RespondToSyncRequest()
 	end
 end
 
--- Parse guild chat message for karma
-local function ParseMessage(message, sender)
+-- Parse guild chat message for karma. A simulated message (from /gk simulate) only
+-- gives karma: it never sends anything to guild chat.
+local function ParseMessage(message, sender, isSimulated)
 	-- Check if someone is requesting a sync
 	local lowerMessage = message:lower()
+	if isSimulated then
+		lowerMessage = ""
+	end
 	if lowerMessage == "gk update" or lowerMessage == "!gk update" then
 		-- One client sends the request; everyone merges the responses
 		RequestSync(IsResponder(sender))
@@ -680,7 +684,7 @@ local function ParseMessage(message, sender)
 		-- Skip repeats within the cooldown so karma can't be spammed
 		if RecordEvent(giver, NormalizeName(properName), now, reason) then
 			-- Only announce if this is OUR character receiving karma
-			local shouldAnnounce = (properName:lower() == myName:lower())
+			local shouldAnnounce = not isSimulated and (properName:lower() == myName:lower())
 			AddKarma(properName, shouldAnnounce)
 		end
 	end
@@ -926,6 +930,7 @@ local function SlashCommandHandler(msg)
 		print("  /gk history [playername] - Show recent karma and the reasons given")
 		print("  /gk sync - Sync karma data with other guild members")
 		print("  /gk debug <name> - Test if a name is found in guild roster")
+		print("  /gk simulate <sender>: <message> - Test a guild chat line on your client only")
 		print("  /gk reset - Reset all karma for the guild (guild leader only)")
 		print("Add a reason after ++, e.g. 'Name++ for the heals'. The same person can")
 		print("  give the same player karma once every " .. KARMA_COOLDOWN / 60 .. " minutes")
@@ -955,6 +960,18 @@ local function SlashCommandHandler(msg)
 				Print("Total guild members: " .. GetNumGuildMembers())
 				Print("Try typing: /gk debug YourExactCharacterName")
 			end
+		end
+	elseif msg:match("^simulate%s+") then
+		-- Solo testing: run a guild chat line from another member through the addon locally
+		local senderName, text = msg:match("^simulate%s+(.-):%s*(.+)$")
+		local isInGuild, properName = IsGuildMember(senderName or "")
+		if not text then
+			Print("Usage: /gk simulate Sender Name: Someone++ reason")
+		elseif not isInGuild then
+			Print("'" .. senderName .. "' isn't in your guild.")
+		else
+			Print("Simulating guild chat from " .. properName .. ": " .. text)
+			ParseMessage(text, properName, true)
 		end
 	elseif msg == "history" or msg:match("^history%s+") then
 		ShowHistory(msg:match("^history%s+(.+)$"))
