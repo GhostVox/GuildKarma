@@ -6,7 +6,8 @@ local FRAME_WIDTH = 460
 local FRAME_HEIGHT = 540
 local ROW_HEIGHT = 22
 local EVENT_ROW_HEIGHT = 34
-local CONTENT_WIDTH = FRAME_WIDTH - 46
+local SCROLLBAR_WIDTH = 6
+local CONTENT_WIDTH = FRAME_WIDTH - 34
 local MAX_KARMA = 999999
 local REPORT_COOLDOWN = 10 -- Seconds before "Post Top 10" can be used again
 local HISTORY_TOOLTIP_LINES = 5
@@ -168,12 +169,82 @@ local function SetTooltip(widget, title, text)
 	widget:SetScript("OnLeave", GameTooltip_Hide)
 end
 
--- A scrolling list area; returns the scroll frame and its content frame
+-- A scrolling list area with a slim scroll bar that only shows when the list
+-- is taller than the view; returns the scroll frame and its content frame
 local function CreateScrollList(parent, name)
-	local scroll = CreateFrame("ScrollFrame", name, parent, "UIPanelScrollFrameTemplate")
+	local scroll = CreateFrame("ScrollFrame", name, parent)
 	local content = CreateFrame("Frame", nil, scroll)
 	content:SetSize(CONTENT_WIDTH, 1)
 	scroll:SetScrollChild(content)
+
+	local bar = CreateFrame("Frame", nil, parent)
+	bar:SetWidth(SCROLLBAR_WIDTH)
+	bar:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 4, 0)
+	bar:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 4, 0)
+	local track = bar:CreateTexture(nil, "BACKGROUND")
+	track:SetAllPoints()
+	track:SetColorTexture(1, 1, 1, 0.04)
+
+	local thumb = CreateFrame("Frame", nil, bar)
+	thumb:SetWidth(SCROLLBAR_WIDTH)
+	thumb:EnableMouse(true)
+	local thumbTexture = thumb:CreateTexture(nil, "ARTWORK")
+	thumbTexture:SetAllPoints()
+	SetColor(thumbTexture, COLOR_BORDER)
+
+	-- Size and place the thumb to match the scroll position
+	local function UpdateBar()
+		local range = scroll:GetVerticalScrollRange()
+		bar:SetShown(range > 0)
+		if range <= 0 then
+			return
+		end
+		local viewHeight = scroll:GetHeight()
+		local barHeight = bar:GetHeight()
+		local thumbHeight = math.max(24, barHeight * viewHeight / (viewHeight + range))
+		thumb:SetHeight(thumbHeight)
+		thumb:ClearAllPoints()
+		thumb:SetPoint("TOP", bar, "TOP", 0, -(barHeight - thumbHeight) * scroll:GetVerticalScroll() / range)
+	end
+
+	local function ScrollTo(offset)
+		scroll:SetVerticalScroll(math.max(0, math.min(scroll:GetVerticalScrollRange(), offset)))
+		UpdateBar()
+	end
+
+	scroll:EnableMouseWheel(true)
+	scroll:SetScript("OnMouseWheel", function(self, delta)
+		ScrollTo(self:GetVerticalScroll() - delta * ROW_HEIGHT * 3)
+	end)
+	scroll:SetScript("OnScrollRangeChanged", function(self)
+		ScrollTo(self:GetVerticalScroll())
+	end)
+	scroll:SetScript("OnSizeChanged", UpdateBar)
+
+	-- Drag the thumb to scroll
+	thumb:SetScript("OnEnter", function()
+		thumbTexture:SetColorTexture(COLOR_ACCENT[1], COLOR_ACCENT[2], COLOR_ACCENT[3], 0.6)
+	end)
+	thumb:SetScript("OnLeave", function()
+		SetColor(thumbTexture, COLOR_BORDER)
+	end)
+	thumb:SetScript("OnMouseDown", function(self)
+		local _, startY = GetCursorPosition()
+		local startOffset = scroll:GetVerticalScroll()
+		local scale = self:GetEffectiveScale()
+		self:SetScript("OnUpdate", function()
+			local _, cursorY = GetCursorPosition()
+			local travel = bar:GetHeight() - self:GetHeight()
+			if travel > 0 then
+				ScrollTo(startOffset + (startY - cursorY) / scale * scroll:GetVerticalScrollRange() / travel)
+			end
+		end)
+	end)
+	thumb:SetScript("OnMouseUp", function(self)
+		self:SetScript("OnUpdate", nil)
+	end)
+
+	UpdateBar()
 	return scroll, content
 end
 
@@ -515,7 +586,7 @@ local function CreateLeaderboardPage(parent)
 		label:SetText(header[1])
 	end
 	local karmaHeader = page:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	karmaHeader:SetPoint("TOPRIGHT", -40, -60)
+	karmaHeader:SetPoint("TOPRIGHT", -28, -60)
 	karmaHeader:SetText("Karma")
 	local divider = page:CreateTexture(nil, "ARTWORK")
 	SetColor(divider, COLOR_BORDER)
@@ -526,7 +597,7 @@ local function CreateLeaderboardPage(parent)
 	local scroll
 	scroll, page.content = CreateScrollList(page, "GuildKarmaLeaderboardScroll")
 	scroll:SetPoint("TOPLEFT", 10, -78)
-	scroll:SetPoint("BOTTOMRIGHT", -30, 4)
+	scroll:SetPoint("BOTTOMRIGHT", -24, 4)
 
 	page.empty = page:CreateFontString(nil, "OVERLAY", "GameFontDisable")
 	page.empty:SetPoint("TOP", scroll, "TOP", 0, -40)
@@ -607,7 +678,7 @@ local function CreateActivityPage(parent)
 	local scroll
 	scroll, page.content = CreateScrollList(page, "GuildKarmaActivityScroll")
 	scroll:SetPoint("TOPLEFT", 10, -28)
-	scroll:SetPoint("BOTTOMRIGHT", -30, 4)
+	scroll:SetPoint("BOTTOMRIGHT", -24, 4)
 
 	page.empty = page:CreateFontString(nil, "OVERLAY", "GameFontDisable")
 	page.empty:SetPoint("TOP", scroll, "TOP", 0, -40)

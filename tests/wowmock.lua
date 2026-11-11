@@ -173,6 +173,27 @@ function Frame:GetWidth()
 	return 140
 end
 
+function Frame:SetHeight(height)
+	self.height = height
+end
+
+function Frame:GetHeight()
+	return self.height or 300
+end
+
+-- Scroll frames: tests set scrollRange to simulate a list taller than the view
+function Frame:GetVerticalScrollRange()
+	return self.scrollRange or 0
+end
+
+function Frame:GetVerticalScroll()
+	return self.verticalScroll or 0
+end
+
+function Frame:SetVerticalScroll(offset)
+	self.verticalScroll = offset
+end
+
 function Frame:GetCenter()
 	return 0, 0
 end

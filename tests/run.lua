@@ -435,6 +435,43 @@ test("the karma window shows the leaderboard, periods and activity", function()
 	eq(#activity, 1, "activity rows")
 end)
 
+test("the scroll bar only shows when the list is taller than the window", function()
+	local world = NewGuild()
+	local client = world.clients["Ghostvox"]
+	client.ns.ToggleUI()
+
+	local scroll = client.env.GuildKarmaLeaderboardScroll
+
+	-- The bar is the one frame that appears when the range grows
+	local function VisibleFrames()
+		local visible = {}
+		for _, frame in ipairs(client.frames) do
+			visible[frame] = frame.shown
+		end
+		return visible
+	end
+	scroll.scrollRange = 0
+	scroll:RunScript("OnScrollRangeChanged")
+	local before = VisibleFrames()
+	scroll.scrollRange = 200
+	scroll:RunScript("OnScrollRangeChanged")
+	local changed = 0
+	for frame, wasShown in pairs(before) do
+		if not wasShown and frame.shown then
+			changed = changed + 1
+		end
+	end
+	eq(changed, 1, "one scroll bar appears when the list overflows")
+
+	-- Mouse wheel scrolls, clamped to the range
+	scroll:RunScript("OnMouseWheel", -1)
+	ok(scroll:GetVerticalScroll() > 0, "wheel scrolls down")
+	scroll:RunScript("OnMouseWheel", 100)
+	eq(scroll:GetVerticalScroll(), 0, "can't scroll above the top")
+	scroll:RunScript("OnMouseWheel", -100)
+	eq(scroll:GetVerticalScroll(), 200, "can't scroll past the bottom")
+end)
+
 test("guild members' tooltips show their karma", function()
 	local world = NewGuild()
 	world:Say("Vrani", "Cut Loss++")
