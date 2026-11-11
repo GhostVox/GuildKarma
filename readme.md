@@ -29,6 +29,18 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - Keeps the highest karma values to prevent data loss
 - Perfect for catching up after being offline
 
+🪟 **Karma Window**
+- Open with the minimap button or `/gk ui` to browse every guild member's karma
+- Drag the minimap button around the minimap; right-click it to sync
+- Search by name, sort by karma or name, class-colored names with online status
+- Leaderboard places with gold, silver, and bronze for the top three; tied karma shares a place
+- Hide members with 0 karma, and post the top 10 to guild chat with one click
+
+👑 **Guild Leader Management**
+- The guild leader can raise, lower, or set any member's karma from the window
+- Reset karma for the whole guild with one click
+- Leader edits and resets sync to every addon user, including those who were offline
+
 💬 **Clean Chat Integration**
 - Recipients automatically announce their new karma total
 - No spam - single announcements only
@@ -37,13 +49,15 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 ## Commands
 
 **Slash Commands:**
+- `/gk ui` - Open the karma window
+- `/gk minimap` - Show or hide the minimap button
 - `/gk` - View top 10 karma holders (private)
 - `/gk PlayerName` - Check specific player's karma (private)
 - `/gk report` - Post top 10 to guild chat (public)
 - `/gk report PlayerName` - Post specific player's karma to guild chat (public)
 - `/gk sync` - Request karma sync from other addon users
 - `/gk debug PlayerName` - Test if a name is in guild roster
-- `/gk reset` - Reset all karma data (use with caution!)
+- `/gk reset` - Reset all karma for the guild (guild leader only)
 - `/gk help` - Show all commands
 
 **Guild Chat Triggers:**
@@ -74,7 +88,7 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 
 ## Notes
 
-- Works on Classic Era, Season of Discovery, Cataclysm Classic, and Retail
+- Works on Retail (Midnight), Mists of Pandaria Classic, Cataclysm Classic, Titan Reforged, Burning Crusade Anniversary, Forever, and Classic Era / Season of Discovery
 - Data is stored per-guild (multi-guild support)
 - Sync feature requires at least 2 people with the addon
 - More users = better coverage and more accurate karma tracking

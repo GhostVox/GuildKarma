@@ -1,9 +1,12 @@
-## Interface: 11508 
+## Interface: 120100, 50504, 40402, 38002, 20506, 16001, 11509
 ## Title: Guild Karma
 ## Notes: Tracks guild member karma through ++ mentions in guild chat
 ## Author: Ghostvox
-## Version: 1.0.0
-## SavedVariables: GuildKarmaDB
+## Version: 1.2.0
+## IconTexture: Interface\Icons\Spell_Holy_GreaterBlessingofKings
+## SavedVariables: GuildKarmaDB, GuildKarmaMetaDB, GuildKarmaSettings
 ## X-Curse-Project-ID: 1406731
 
 GuildKarma.lua
+GuildKarmaUI.lua
+GuildKarmaMinimap.lua
