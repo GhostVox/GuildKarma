@@ -29,6 +29,11 @@ local editFlushTimer = nil
 -- Lowercased short names of guild members seen running the addon this session
 local addonUsers = {}
 
+-- Addon message handlers registered by feature files, keyed by message type
+-- ("PROF" handles "PROF:..."), and functions run when we request a sync
+local messageHandlers = {}
+local syncHooks = {}
+
 -- Frame for event handling
 local frame = CreateFrame("Frame")
 
@@ -584,6 +589,9 @@ local function RequestSync(sendRequest)
 	if sendRequest ~= false then
 		C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "REQUEST", "GUILD")
 		RequestEvents()
+		for _, hook in ipairs(syncHooks) do
+			hook()
+		end
 	end
 
 	ExtendSyncWindow()
@@ -770,6 +778,12 @@ local function OnEvent(self, event, ...)
 				if ApplyReset(tonumber(message:match("^RESET:(%d+)$"))) then
 					Print("All karma was reset by the guild leader.")
 				end
+			else
+				local kind, body = message:match("^(%u+):?(.*)$")
+				local handler = kind and messageHandlers[kind]
+				if handler then
+					handler(body, ShortName(sender))
+				end
 			end
 		end
 	end
@@ -921,6 +935,8 @@ local function SlashCommandHandler(msg)
 	if msg == "help" then
 		Print("Commands:")
 		print("  /gk ui - Open the karma window")
+		print("  /gk shop - Spend karma on guild bank items")
+		print("  /gk professions - See who in the guild has which profession")
 		print("  /gk minimap - Show or hide the minimap button")
 		print("  /gk - Show top 10 karma holders")
 		print("  /gk <playername> - Show karma for specific player")
@@ -938,6 +954,10 @@ local function SlashCommandHandler(msg)
 		print("Guild members can type 'gk update' in guild chat to trigger a sync")
 	elseif msg == "ui" then
 		ns.ToggleUI()
+	elseif msg == "shop" then
+		ns.ShowTab("Shop")
+	elseif msg == "professions" or msg == "prof" then
+		ns.ShowTab("Professions")
 	elseif msg == "minimap" then
 		ns.ToggleMinimapButton()
 	elseif msg == "reset" then
@@ -1017,6 +1037,28 @@ ns.GetKarmaCounts = GetKarmaCounts
 ns.GetHistory = GetHistory
 ns.FormatAgo = FormatAgo
 ns.IsGuildMember = IsGuildMember
+ns.IsOnline = IsOnline
+ns.NotifyChanged = NotifyChanged
+ns.NextRev = NextRev
+ns.QueueAddonMessage = QueueAddonMessage
+ns.PlainText = CleanReason
+
+-- Handle addon messages of a type, e.g. "PROF" for "PROF:...". The handler gets
+-- the text after the colon and the sender's short name.
+function ns.RegisterMessageHandler(kind, handler)
+	messageHandlers[kind] = handler
+end
+
+-- Run a function whenever we ask the guild for a sync
+function ns.OnSyncRequest(hook)
+	table.insert(syncHooks, hook)
+end
+
+-- Shared per-guild data that isn't karma totals, or nil when not in a guild
+function ns.GetGuildMeta()
+	local guildName = InitializeGuildDB()
+	return guildName and GuildKarmaMetaDB[guildName]
+end
 
 -- Karma table for the current guild, or nil when not in a guild
 function ns.GetGuildDB()

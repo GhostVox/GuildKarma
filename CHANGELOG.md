@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0
+
+### New
+- **Karma shop** (`/gk shop`): spend karma on guild bank items
+  - The guild master and officers list items and prices (shift-click an item to link it)
+  - Members request an item; the karma is held until an officer approves or denies it
+  - Officers approve, then hand the item over and mark it delivered
+  - Spending never lowers the leaderboard: your balance is karma earned minus karma spent
+  - Officers are told about new requests, and members about decisions on theirs
+- **Professions tab** (`/gk professions`): see who in the guild has which profession and their skill, searchable by profession or name. Members running the addon share theirs automatically, and offline members' professions are passed along by whoever is online.
+
 ## 1.3.0
 
 ### New

@@ -424,6 +424,9 @@ local function BuildEnvironment(world, client)
 	})
 	env.CLASS_ICON_TCOORDS = { WARRIOR = { 0, 0.25, 0, 0.25 }, MAGE = { 0.25, 0.5, 0, 0.25 } }
 	env.hooksecurefunc = function(target, method, hook)
+		if type(target) == "string" then
+			target, method, hook = env, target, method
+		end
 		local original = target[method]
 		target[method] = function(...)
 			local results = { original(...) }
@@ -469,6 +472,32 @@ local function BuildEnvironment(world, client)
 	end
 	env.IsGuildLeader = function()
 		return world.leader == name
+	end
+	env.CanEditOfficerNote = function()
+		return world.members[name].officer or world.leader == name
+	end
+
+	-- Professions, the way Classic Era and Forever list them: skill lines under headers.
+	-- Set member.professions = { { "Alchemy", 250, 300 }, ... }
+	local function SkillLines()
+		local lines = { { "Class Skills", true } }
+		local professions = world.members[name].professions or {}
+		if #professions > 0 then
+			table.insert(lines, { "Professions", true })
+			for _, p in ipairs(professions) do
+				table.insert(lines, { p[1], false, p[2], p[3] })
+			end
+		end
+		table.insert(lines, { "Weapon Skills", true })
+		table.insert(lines, { "Swords", false, 100, 300 })
+		return lines
+	end
+	env.GetNumSkillLines = function()
+		return #SkillLines()
+	end
+	env.GetSkillLineInfo = function(index)
+		local line = SkillLines()[index]
+		return line[1], line[2], true, line[3] or 0, 0, 0, line[4] or 0
 	end
 	env.GetNumGuildMembers = function()
 		return #world.memberOrder

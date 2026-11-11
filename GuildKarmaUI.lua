@@ -27,7 +27,9 @@ local COLOR_BORDER = { 0.25, 0.25, 0.3, 1 }
 local COLOR_BUTTON = { 0.14, 0.14, 0.17, 1 }
 local COLOR_ACCENT = { 1, 0.82, 0 }
 
-local TABS = { "Leaderboard", "Activity" }
+-- Window tabs: { label, create = function(parent) returning a page with :Refresh() }.
+-- Feature files add theirs with ns.AddTab before the window is first opened.
+local tabs = {}
 
 local sortByName = false
 local filterText = ""
@@ -246,6 +248,36 @@ local function CreateScrollList(parent, name)
 
 	UpdateBar()
 	return scroll, content
+end
+
+-- A flat text box. With a placeholder it acts as a search box, calling
+-- onChange with the lowercased text.
+local function CreateEditBox(parent, width, placeholder, onChange)
+	local box = CreateFrame("EditBox", nil, parent)
+	box:SetSize(width, 22)
+	box:SetFontObject(ChatFontNormal)
+	box:SetTextInsets(8, 8, 0, 0)
+	box:SetAutoFocus(false)
+	local bg = box:CreateTexture(nil, "BACKGROUND")
+	bg:SetAllPoints()
+	SetColor(bg, COLOR_BUTTON)
+	AddBorder(box, COLOR_BORDER)
+	box.placeholder = box:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	box.placeholder:SetPoint("LEFT", 8, 0)
+	box.placeholder:SetText(placeholder or "")
+	box:SetScript("OnTextChanged", function(self)
+		self.placeholder:SetShown(self:GetText() == "")
+		if onChange then
+			onChange(self:GetText():lower())
+		end
+	end)
+	box:SetScript("OnEscapePressed", box.ClearFocus)
+	box:SetScript("OnEnterPressed", box.ClearFocus)
+	return box
+end
+
+local function CreateSearchBox(parent, placeholder, onChange)
+	return CreateEditBox(parent, 170, placeholder, onChange)
 end
 
 -- Set a class icon texture, hiding it when the class is unknown
@@ -521,27 +553,11 @@ end
 local function CreateLeaderboardPage(parent)
 	local page = CreateFrame("Frame", nil, parent)
 
-	-- Search box
-	local search = CreateFrame("EditBox", nil, page)
-	search:SetSize(170, 22)
-	search:SetPoint("TOPLEFT", 12, -6)
-	search:SetFontObject(ChatFontNormal)
-	search:SetTextInsets(8, 8, 0, 0)
-	search:SetAutoFocus(false)
-	local searchBg = search:CreateTexture(nil, "BACKGROUND")
-	searchBg:SetAllPoints()
-	SetColor(searchBg, COLOR_BUTTON)
-	AddBorder(search, COLOR_BORDER)
-	search.placeholder = search:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-	search.placeholder:SetPoint("LEFT", 8, 0)
-	search.placeholder:SetText("Search members")
-	search:SetScript("OnTextChanged", function(self)
-		filterText = self:GetText():lower()
-		self.placeholder:SetShown(self:GetText() == "")
+	local search = CreateSearchBox(page, "Search members", function(text)
+		filterText = text
 		ns.OnDataChanged()
 	end)
-	search:SetScript("OnEscapePressed", search.ClearFocus)
-	search:SetScript("OnEnterPressed", search.ClearFocus)
+	search:SetPoint("TOPLEFT", 12, -6)
 
 	page.sortButton = CreateFlatButton(page, "", 96)
 	page.sortButton:SetPoint("TOPRIGHT", -12, -6)
@@ -735,6 +751,9 @@ local function Refresh()
 	ui.resetAll:SetShown(ns.CanManage())
 end
 
+tabs[1] = { label = "Leaderboard", create = CreateLeaderboardPage }
+tabs[2] = { label = "Activity", create = CreateActivityPage }
+
 local function CreateUI()
 	ui = CreateFrame("Frame", "GuildKarmaFrame", UIParent)
 	ui:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
@@ -787,9 +806,10 @@ local function CreateUI()
 
 	-- Tabs
 	tabButtons = {}
-	for i, label in ipairs(TABS) do
-		local tab = CreateFlatButton(ui, label, 110, 24)
-		tab:SetPoint("TOPLEFT", 12 + (i - 1) * 114, -68)
+	local tabWidth = math.min(110, (FRAME_WIDTH - 24 - (#tabs - 1) * 4) / #tabs)
+	for i, tabInfo in ipairs(tabs) do
+		local tab = CreateFlatButton(ui, tabInfo.label, tabWidth, 24)
+		tab:SetPoint("TOPLEFT", 12 + (i - 1) * (tabWidth + 4), -68)
 		tab.selected = tab:CreateTexture(nil, "OVERLAY")
 		tab.selected:SetColorTexture(COLOR_ACCENT[1], COLOR_ACCENT[2], COLOR_ACCENT[3], 1)
 		tab.selected:SetHeight(2)
@@ -808,7 +828,10 @@ local function CreateUI()
 	tabDivider:SetPoint("TOPLEFT", 1, -92)
 	tabDivider:SetPoint("TOPRIGHT", -1, -92)
 
-	pages = { CreateLeaderboardPage(ui), CreateActivityPage(ui) }
+	pages = {}
+	for i, tabInfo in ipairs(tabs) do
+		pages[i] = tabInfo.create(ui)
+	end
 	for _, page in ipairs(pages) do
 		page:SetPoint("TOPLEFT", 0, -94)
 		page:SetPoint("BOTTOMRIGHT", 0, 42)
@@ -857,5 +880,42 @@ function ns.ToggleUI()
 	end
 	ui:SetShown(not ui:IsShown())
 end
+
+-- Add a tab to the karma window
+function ns.AddTab(label, create)
+	table.insert(tabs, { label = label, create = create })
+end
+
+-- Open the karma window on a tab, by label
+function ns.ShowTab(label)
+	for i, tabInfo in ipairs(tabs) do
+		if tabInfo.label == label then
+			GetSettings().tab = i
+		end
+	end
+	if not ui then
+		CreateUI()
+	end
+	ui:Show()
+	Refresh()
+end
+
+-- Widgets and colors shared with the feature tabs
+ns.Widgets = {
+	SetColor = SetColor,
+	AddBorder = AddBorder,
+	CreateFlatButton = CreateFlatButton,
+	CreateScrollList = CreateScrollList,
+	CreateSearchBox = CreateSearchBox,
+	CreateEditBox = CreateEditBox,
+	SetTooltip = SetTooltip,
+	SetClassIcon = SetClassIcon,
+	ColoredName = ColoredName,
+	ROW_HEIGHT = ROW_HEIGHT,
+	CONTENT_WIDTH = CONTENT_WIDTH,
+	COLOR_BUTTON = COLOR_BUTTON,
+	COLOR_BORDER = COLOR_BORDER,
+	COLOR_ACCENT = COLOR_ACCENT,
+}
 
 ns.OnDataChanged = Refresh

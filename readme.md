@@ -43,6 +43,17 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - Hide members with 0 karma, and post the top 10 to guild chat with one click
 - Drag the minimap button around the minimap; right-click it to sync
 
+🛒 **Karma Shop**
+- Spend karma on guild bank items with `/gk shop`
+- The guild master and officers list items and prices
+- Request an item and an officer approves it, then hands it over
+- Spending never lowers the leaderboard: your balance is karma earned minus karma spent
+
+🛠️ **Guild Professions**
+- See who has which profession and their skill with `/gk professions`
+- Search by profession or member name
+- Shared automatically by members running the addon, including offline members
+
 👑 **Guild Leader Management**
 - The guild leader can raise, lower, or set any member's karma from the window
 - Reset karma for the whole guild with one click
@@ -57,6 +68,8 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 
 **Slash Commands:**
 - `/gk ui` - Open the karma window
+- `/gk shop` - Spend karma on guild bank items
+- `/gk professions` - See who in the guild has which profession
 - `/gk minimap` - Show or hide the minimap button
 - `/gk` - View top 10 karma holders (private)
 - `/gk PlayerName` - Check specific player's karma (private)
@@ -66,6 +79,7 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - `/gk history [PlayerName]` - Show recent karma and the reasons given (private)
 - `/gk sync` - Request karma sync from other addon users
 - `/gk debug PlayerName` - Test if a name is in guild roster
+- `/gk simulate Sender Name: message` - Test a guild chat line on your client only, without posting it
 - `/gk reset` - Reset all karma for the guild (guild leader only)
 - `/gk help` - Show all commands
 

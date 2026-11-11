@@ -407,6 +407,212 @@ test("/gk simulate gives karma locally without posting to guild chat", function(
 end)
 
 ---------------------------------------------------------------------------
+-- Professions
+---------------------------------------------------------------------------
+
+-- Give a member professions and let their addon notice and share them
+local function LearnProfessions(world, name, professions)
+	world.members[name].professions = professions
+	world:Fire(world.clients[name], "SKILL_LINES_CHANGED")
+	world:Advance(10)
+end
+
+-- A client's view of one profession: { "Name rank/max", ... }
+local function ProfessionMembers(world, viewer, profession)
+	for _, group in ipairs(world.clients[viewer].ns.GetProfessionGroups()) do
+		if group.name == profession then
+			local members = {}
+			for _, member in ipairs(group.members) do
+				table.insert(members, member.name .. " " .. member.rank .. "/" .. member.max)
+			end
+			return table.concat(members, ", ")
+		end
+	end
+	return nil
+end
+
+test("members share professions and everyone sees them grouped", function()
+	local world = NewGuild()
+	LearnProfessions(world, "Cut Loss", { { "Alchemy", 250, 300 }, { "Herbalism", 300, 300 } })
+	LearnProfessions(world, "Vrani", { { "Alchemy", 300, 300 } })
+
+	eq(ProfessionMembers(world, "Ghostvox", "Alchemy"), "Vrani 300/300, Cut Loss 250/300", "sorted by skill")
+	eq(ProfessionMembers(world, "Vrani", "Herbalism"), "Cut Loss 300/300")
+	eq(ProfessionMembers(world, "Ghostvox", "Swords"), nil, "non-profession skills are left out")
+end)
+
+test("skill-ups replace the old professions", function()
+	local world = NewGuild()
+	LearnProfessions(world, "Cut Loss", { { "Alchemy", 250, 300 } })
+	LearnProfessions(world, "Cut Loss", { { "Alchemy", 260, 300 } })
+
+	eq(ProfessionMembers(world, "Ghostvox", "Alchemy"), "Cut Loss 260/300")
+end)
+
+test("a new addon user sees offline members' professions", function()
+	local world = NewGuild()
+	LearnProfessions(world, "Cut Loss", { { "Tailoring", 150, 225 } })
+	world:Logout("Cut Loss")
+
+	world:AddMember("Newbie")
+	world:Login("Newbie")
+	world:Advance(60)
+	eq(ProfessionMembers(world, "Newbie", "Tailoring"), "Cut Loss 150/225")
+end)
+
+---------------------------------------------------------------------------
+-- Karma shop
+---------------------------------------------------------------------------
+
+-- The guild leader lists an item and Vrani gets some karma to spend
+local function NewShop(vraniKarma)
+	local world = NewGuild()
+	local leader = world.clients["Ghostvox"].ns
+	leader.SetKarma("Vrani", vraniKarma or 5)
+	leader.SaveShopItem(nil, "Flask of Titans", 3)
+	world:Advance(10)
+	local itemId = world.clients["Vrani"].ns.GetShopItems()[1].id
+	return world, itemId
+end
+
+-- The id of a client's only request
+local function OnlyRequest(world, viewer)
+	local requests = world.clients[viewer].ns.GetShopRequests()
+	eq(#requests, 1, viewer .. "'s requests")
+	return requests[1]
+end
+
+test("officers list items and every member sees them", function()
+	local world = NewShop()
+	for _, name in ipairs(ADDON_USERS) do
+		local items = world.clients[name].ns.GetShopItems()
+		eq(#items, 1, name .. "'s items")
+		eq(items[1].name, "Flask of Titans")
+		eq(items[1].price, 3)
+	end
+end)
+
+test("members can't list items", function()
+	local world = NewGuild()
+	world.clients["Vrani"].ns.SaveShopItem(nil, "Free Epic", 1)
+	world:Advance(10)
+	eq(#world.clients["Ghostvox"].ns.GetShopItems(), 0)
+end)
+
+test("a request holds karma until an officer approves, then it's spent", function()
+	local world, itemId = NewShop(5)
+	world.clients["Vrani"].ns.RequestShopItem(itemId)
+	world:Advance(10)
+
+	-- Officers hear about it, and the karma is held on every client
+	ok(table.concat(world.clients["Ghostvox"].log, "\n"):find("Vrani requested Flask of Titans for 3 karma"), "officer notified")
+	for _, name in ipairs(ADDON_USERS) do
+		local balance = world.clients[name].ns.GetBalance("Vrani")
+		eq(balance.pending, 3, name .. " sees pending")
+		eq(balance.available, 2, name .. " sees available")
+	end
+
+	local request = OnlyRequest(world, "Ghostvox")
+	world.clients["Ghostvox"].ns.SetShopRequestStatus(request.id, "approved")
+	world:Advance(10)
+	for _, name in ipairs(ADDON_USERS) do
+		local balance = world.clients[name].ns.GetBalance("Vrani")
+		eq(balance.spent, 3, name .. " sees spent")
+		eq(balance.pending, 0, name .. " sees nothing pending")
+		eq(balance.available, 2, name .. " sees available")
+	end
+	ok(table.concat(world.clients["Vrani"].log, "\n"):find("Ghostvox approved your request"), "requester notified")
+
+	-- Spending doesn't touch the leaderboard
+	AllHaveKarma(world, "Vrani", 5)
+
+	world.clients["Ghostvox"].ns.SetShopRequestStatus(request.id, "delivered")
+	world:Advance(10)
+	eq(OnlyRequest(world, "Vrani").status, "delivered")
+end)
+
+test("denied and cancelled requests give the karma back", function()
+	local world, itemId = NewShop(5)
+	local vrani = world.clients["Vrani"].ns
+	vrani.RequestShopItem(itemId)
+	world:Advance(10)
+	world.clients["Ghostvox"].ns.SetShopRequestStatus(OnlyRequest(world, "Ghostvox").id, "denied")
+	world:Advance(10)
+	eq(vrani.GetBalance("Vrani").available, 5, "after deny")
+
+	vrani.RequestShopItem(itemId)
+	world:Advance(10)
+	local pending
+	for _, request in ipairs(vrani.GetShopRequests()) do
+		if request.status == "pending" then
+			pending = request
+		end
+	end
+	vrani.SetShopRequestStatus(pending.id, "cancelled")
+	world:Advance(10)
+	eq(world.clients["Ghostvox"].ns.GetBalance("Vrani").available, 5, "after cancel")
+end)
+
+test("members can't spend karma they don't have, or approve requests", function()
+	local world, itemId = NewShop(5)
+	local vrani = world.clients["Vrani"].ns
+	vrani.RequestShopItem(itemId)
+	vrani.RequestShopItem(itemId)
+	world:Advance(10)
+	eq(#vrani.GetShopRequests(), 1, "second request refused: only 2 karma left")
+
+	vrani.SetShopRequestStatus(vrani.GetShopRequests()[1].id, "approved")
+	world:Advance(10)
+	eq(OnlyRequest(world, "Ghostvox").status, "pending", "members can't approve")
+end)
+
+test("a request made with no officer online reaches them when they log in", function()
+	local world, itemId = NewShop(5)
+	world:Logout("Ghostvox")
+	world:Logout("Cut Loss")
+	world.clients["Vrani"].ns.RequestShopItem(itemId)
+	world:Advance(10)
+
+	world:Logout("Vrani")
+	world:Login("Ghostvox")
+	world:Advance(60)
+	eq(#world.clients["Ghostvox"].ns.GetShopRequests(), 0, "nobody online had it")
+
+	-- Once Vrani is back, their sync shares the request
+	world:Login("Vrani")
+	world:Advance(60)
+	eq(OnlyRequest(world, "Ghostvox").status, "pending")
+end)
+
+test("a new member gets the shop on login, and removed items disappear", function()
+	local world, itemId = NewShop(5)
+	world:AddMember("Newbie")
+	world:Login("Newbie")
+	world:Advance(60)
+	eq(#world.clients["Newbie"].ns.GetShopItems(), 1, "catalog synced")
+
+	world.clients["Ghostvox"].ns.RemoveShopItem(itemId)
+	world:Advance(10)
+	for name in pairs(world.clients) do
+		eq(#world.clients[name].ns.GetShopItems(), 0, name .. " still sees the removed item")
+	end
+end)
+
+test("purchases from before a guild-wide reset don't count", function()
+	local world, itemId = NewShop(5)
+	world.clients["Vrani"].ns.RequestShopItem(itemId)
+	world:Advance(10)
+	world.clients["Ghostvox"].ns.SetShopRequestStatus(OnlyRequest(world, "Ghostvox").id, "approved")
+	world:Advance(10)
+
+	world:Slash("Ghostvox", "reset")
+	world:Advance(10)
+	world.clients["Ghostvox"].ns.SetKarma("Vrani", 4)
+	world:Advance(10)
+	eq(world.clients["Vrani"].ns.GetBalance("Vrani").available, 4)
+end)
+
+---------------------------------------------------------------------------
 -- UI and tooltips
 ---------------------------------------------------------------------------
 
@@ -483,6 +689,45 @@ test("the scroll bar only shows when the list is taller than the window", functi
 	eq(scroll:GetVerticalScroll(), 0, "can't scroll above the top")
 	scroll:RunScript("OnMouseWheel", -100)
 	eq(scroll:GetVerticalScroll(), 200, "can't scroll past the bottom")
+end)
+
+test("the Professions and Shop tabs work from the window", function()
+	local world, itemId = NewShop(5)
+	LearnProfessions(world, "Cut Loss", { { "Alchemy", 250, 300 } })
+
+	local vrani = world.clients["Vrani"]
+	vrani.ns.ToggleUI()
+	world:FindButton("Vrani", "Professions"):Click()
+	local professionRows = world:FindFrames("Vrani", function(frame)
+		return frame.frameType == "FontString" and frame.text == "Alchemy"
+	end)
+	eq(#professionRows, 1, "Alchemy header")
+
+	-- Request through the window: the Request button asks for confirmation
+	world:FindButton("Vrani", "Shop"):Click()
+	world:FindButton("Vrani", "Request"):Click()
+	local popup = vrani.popups[#vrani.popups]
+	eq(popup.which, "GUILDKARMA_SHOP_REQUEST")
+	vrani.env.StaticPopupDialogs[popup.which].OnAccept({}, popup.data)
+	world:Advance(10)
+
+	-- The leader approves from their window; members don't get the button
+	local leader = world.clients["Ghostvox"]
+	leader.ns.ShowTab("Shop")
+	world:FindButton("Ghostvox", "Approve"):Click()
+	world:Advance(10)
+	eq(OnlyRequest(world, "Vrani").status, "approved")
+	eq(#world:FindFrames("Vrani", function(frame)
+		return frame.text == "Approve" and frame.shown
+	end), 0, "members see no Approve button")
+
+	-- The leader adds an item through the dialog
+	world:FindButton("Ghostvox", "Add item"):Click()
+	leader.env.GuildKarmaShopDialog.itemBox:SetText("Major Healing Potion")
+	leader.env.GuildKarmaShopDialog.priceBox:SetText("2")
+	world:FindButton("Ghostvox", "Save"):Click()
+	world:Advance(10)
+	eq(#vrani.ns.GetShopItems(), 2, "new item reaches members")
 end)
 
 test("guild members' tooltips show their karma", function()
