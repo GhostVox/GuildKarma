@@ -15,6 +15,10 @@ local MAX_ADDON_MSG = 255 -- Hard limit on addon message length (bytes)
 local CHUNK_INTERVAL = 1 -- Seconds between data chunks, to stay under the addon message throttle
 local SYNC_WINDOW = 5 -- Seconds of silence before a sync is considered complete
 local EDIT_FLUSH_DELAY = 1 -- Seconds to batch leader edits before broadcasting them
+local KARMA_COOLDOWN = 300 -- Seconds before the same player can give the same person karma again
+local HISTORY_DAYS = 35 -- Days of karma history kept for recent leaderboards and tooltips
+local MAX_REASON = 60 -- Longest reason kept with a karma event (bytes)
+local DAY = 86400
 local isSyncing = false
 local syncTimeout = nil
 
@@ -66,6 +70,8 @@ local function InitializeGuildDB()
 	GuildKarmaMetaDB[guildName] = GuildKarmaMetaDB[guildName] or {}
 	GuildKarmaMetaDB[guildName].rev = GuildKarmaMetaDB[guildName].rev or {}
 	GuildKarmaMetaDB[guildName].resetRev = GuildKarmaMetaDB[guildName].resetRev or 0
+	-- Karma history: { t = server time, from = giver, to = receiver, reason = optional text }, oldest first
+	GuildKarmaMetaDB[guildName].events = GuildKarmaMetaDB[guildName].events or {}
 	return guildName
 end
 
@@ -115,6 +121,115 @@ local function AddKarma(playerName, shouldAnnounce)
 	end
 
 	NotifyChanged()
+end
+
+-- Find an event from one player to another within the cooldown of time t. Every addon
+-- user records the same chat message, so this also spots duplicates during sync.
+local function FindNearbyEvent(events, from, to, t)
+	for i = #events, 1, -1 do
+		local event = events[i]
+		if event.from == from and event.to == to and math.abs(event.t - t) < KARMA_COOLDOWN then
+			return event
+		end
+	end
+	return nil
+end
+
+-- Record a karma event, keeping the history sorted by time. Repeats within the
+-- cooldown, and events older than the history window or the last reset, are skipped.
+-- Returns true if the event was recorded.
+local function RecordEvent(from, to, t, reason)
+	local guildName = InitializeGuildDB()
+	if not guildName then
+		return false
+	end
+
+	local meta = GuildKarmaMetaDB[guildName]
+	local events = meta.events
+	if t < meta.resetRev or t < GetServerTime() - HISTORY_DAYS * DAY or FindNearbyEvent(events, from, to, t) then
+		return false
+	end
+
+	local index = #events
+	while index > 0 and events[index].t > t do
+		index = index - 1
+	end
+	table.insert(events, index + 1, { t = t, from = from, to = to, reason = reason })
+	return true
+end
+
+-- Drop events that have aged out of the history window
+local function PruneEvents()
+	local guildName = InitializeGuildDB()
+	if not guildName then
+		return
+	end
+
+	local meta = GuildKarmaMetaDB[guildName]
+	local cutoff = GetServerTime() - HISTORY_DAYS * DAY
+	local kept = {}
+	for _, event in ipairs(meta.events) do
+		if event.t >= cutoff then
+			table.insert(kept, event)
+		end
+	end
+	meta.events = kept
+end
+
+-- Karma per player: all-time totals, or karma received in the last `days` days
+local function GetKarmaCounts(days)
+	local guildName = InitializeGuildDB()
+	if not guildName then
+		return {}
+	end
+	if not days then
+		return GuildKarmaDB[guildName]
+	end
+
+	local counts = {}
+	local cutoff = GetServerTime() - days * DAY
+	for _, event in ipairs(GuildKarmaMetaDB[guildName].events) do
+		if event.t >= cutoff then
+			counts[event.to] = (counts[event.to] or 0) + 1
+		end
+	end
+	return counts
+end
+
+-- Recent karma events, newest first: all of them, or only those received by `name`
+local function GetHistory(name, limit)
+	local guildName = InitializeGuildDB()
+	if not guildName then
+		return {}
+	end
+
+	local events = GuildKarmaMetaDB[guildName].events
+	local history = {}
+	for i = #events, 1, -1 do
+		if not name or events[i].to == name then
+			table.insert(history, events[i])
+			if limit and #history >= limit then
+				break
+			end
+		end
+	end
+	return history
+end
+
+-- Turn the text after a ++ into a short plain reason: strip colors, textures and
+-- link markup (keeping link text), and characters the sync format uses as separators
+local function CleanReason(text)
+	text = text:gsub("|c%x%x%x%x%x%x%x%x", "")
+		:gsub("|r", "")
+		:gsub("|H.-|h(.-)|h", "%1")
+		:gsub("|T.-|t", "")
+		:gsub("[~%^]", "")
+	text = text:match("^%s*(.-)%s*$")
+	if #text > MAX_REASON then
+		-- Cut on a character boundary so multi-byte letters aren't split
+		text = text:sub(1, MAX_REASON):gsub("[\192-\255][\128-\191]*$", "")
+	end
+	return text ~= "" and text or nil
 end
 
 -- Check if a player is in the guild
@@ -208,6 +323,49 @@ local function IsResponder(sender)
 	return leader == myKey
 end
 
+-- Bulk sync messages wait here and go out one per CHUNK_INTERVAL, to stay under
+-- the addon message throttle
+local sendQueue = {}
+local sendTicker = nil
+
+local function QueueAddonMessage(message)
+	table.insert(sendQueue, message)
+	if sendTicker then
+		return
+	end
+
+	C_ChatInfo.SendAddonMessage(SYNC_PREFIX, table.remove(sendQueue, 1), "GUILD")
+	sendTicker = C_Timer.NewTicker(CHUNK_INTERVAL, function()
+		local nextMessage = table.remove(sendQueue, 1)
+		if nextMessage then
+			C_ChatInfo.SendAddonMessage(SYNC_PREFIX, nextMessage, "GUILD")
+		else
+			sendTicker:Cancel()
+			sendTicker = nil
+		end
+	end)
+end
+
+-- Join entries with a separator into chunks no longer than maxPayload bytes
+local function JoinInChunks(entries, separator, maxPayload)
+	local chunks = {}
+	local current = ""
+	for _, entry in ipairs(entries) do
+		if current == "" then
+			current = entry
+		elseif #current + #separator + #entry > maxPayload then
+			table.insert(chunks, current)
+			current = entry
+		else
+			current = current .. separator .. entry
+		end
+	end
+	if current ~= "" then
+		table.insert(chunks, current)
+	end
+	return chunks
+end
+
 -- Split karma data into "name:karma[:rev],..." chunks that fit in one addon message.
 -- Older clients read only "name:karma" and ignore the revision.
 local function SerializeKarmaChunks(names)
@@ -218,28 +376,56 @@ local function SerializeKarmaChunks(names)
 
 	local db = GuildKarmaDB[guildName]
 	local revs = GuildKarmaMetaDB[guildName].rev
-	local chunks = {}
-	local current = ""
-	local maxPayload = MAX_ADDON_MSG - #"DATA:"
+	local entries = {}
 	for name in pairs(names or db) do
 		local entry = name .. ":" .. (db[name] or 0)
 		if revs[name] then
 			entry = entry .. ":" .. revs[name]
 		end
-		if current == "" then
-			current = entry
-		elseif #current + 1 + #entry > maxPayload then
-			table.insert(chunks, current)
-			current = entry
-		else
-			current = current .. "," .. entry
-		end
-	end
-	if current ~= "" then
-		table.insert(chunks, current)
+		table.insert(entries, entry)
 	end
 
-	return chunks
+	return JoinInChunks(entries, ",", MAX_ADDON_MSG - #"DATA:")
+end
+
+-- Split karma history since a server time into "t~from~to~reason^..." chunks
+local function SerializeEventChunks(since)
+	local entries = {}
+	for _, event in ipairs(GetHistory()) do
+		if event.t >= since then
+			table.insert(entries, event.t .. "~" .. event.from .. "~" .. event.to .. "~" .. (event.reason or ""))
+		end
+	end
+
+	return JoinInChunks(entries, "^", MAX_ADDON_MSG - #"EVENTS:")
+end
+
+-- Merge karma history received from another addon user. Returns how many events were new.
+local function MergeEvents(data)
+	local added = 0
+	for record in data:gmatch("[^%^]+") do
+		local t, from, to, reason = record:match("^(%d+)~([^~]+)~([^~]+)~(.*)$")
+		if t and RecordEvent(from, to, tonumber(t), reason ~= "" and reason or nil) then
+			added = added + 1
+		end
+	end
+
+	if added > 0 then
+		NotifyChanged()
+	end
+	return added
+end
+
+-- Ask other addon users for karma history from around when we were last online
+local function RequestEvents()
+	local guildName = InitializeGuildDB()
+	if not guildName then
+		return
+	end
+
+	local oldest = GetServerTime() - HISTORY_DAYS * DAY
+	local since = math.max(oldest, (GuildKarmaMetaDB[guildName].lastOnline or 0) - KARMA_COOLDOWN)
+	C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "EVENTREQ:" .. since, "GUILD")
 end
 
 -- Merge received karma data with local data. The entry with the newer leader
@@ -302,6 +488,13 @@ local function ApplyReset(resetRev)
 			meta.rev[name] = nil
 		end
 	end
+	local keptEvents = {}
+	for _, event in ipairs(meta.events) do
+		if event.t >= resetRev then
+			table.insert(keptEvents, event)
+		end
+	end
+	meta.events = keptEvents
 	meta.resetRev = resetRev
 
 	NotifyChanged()
@@ -323,10 +516,8 @@ local function FlushEdits()
 	editFlushTimer = nil
 	local chunks = SerializeKarmaChunks(pendingEdits)
 	pendingEdits = {}
-	for i, chunk in ipairs(chunks) do
-		C_Timer.After((i - 1) * CHUNK_INTERVAL, function()
-			C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "DATA:" .. chunk, "GUILD")
-		end)
+	for _, chunk in ipairs(chunks) do
+		QueueAddonMessage("DATA:" .. chunk)
 	end
 end
 
@@ -392,6 +583,7 @@ local function RequestSync(sendRequest)
 
 	if sendRequest ~= false then
 		C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "REQUEST", "GUILD")
+		RequestEvents()
 	end
 
 	ExtendSyncWindow()
@@ -408,21 +600,15 @@ local function RespondToSyncRequest()
 	-- Pass on the last reset first, so peers drop stale entries
 	local resetRev = GuildKarmaMetaDB[guildName].resetRev
 	if resetRev > 0 then
-		C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "RESET:" .. resetRev, "GUILD")
+		QueueAddonMessage("RESET:" .. resetRev)
 	end
 
 	local chunks = SerializeKarmaChunks()
-	if #chunks == 0 then
-		if resetRev == 0 then
-			C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "HELLO", "GUILD")
-		end
-		return
+	if #chunks == 0 and resetRev == 0 then
+		QueueAddonMessage("HELLO")
 	end
-
-	for i, chunk in ipairs(chunks) do
-		C_Timer.After((resetRev > 0 and i or i - 1) * CHUNK_INTERVAL, function()
-			C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "DATA:" .. chunk, "GUILD")
-		end)
+	for _, chunk in ipairs(chunks) do
+		QueueAddonMessage("DATA:" .. chunk)
 	end
 end
 
@@ -455,7 +641,9 @@ local function ParseMessage(message, sender)
 	-- Get current player name
 	local myName = UnitName("player")
 
-	-- Find each "++" that ends a word and credit the guild member named just before it
+	-- Find each "++" that ends a word and the guild member named just before it
+	local mentions = {}
+	local reasonStart = nil
 	local searchFrom = 1
 	while true do
 		local plusStart, plusEnd = message:find("%+%+", searchFrom)
@@ -477,10 +665,23 @@ local function ParseMessage(message, sender)
 					return
 				end
 
-				-- Only announce if this is OUR character receiving karma
-				local shouldAnnounce = (properName:lower() == myName:lower())
-				AddKarma(properName, shouldAnnounce)
+				table.insert(mentions, properName)
+				reasonStart = plusEnd + 1
 			end
+		end
+	end
+
+	-- Text after the last mention is the reason, e.g. "Cut Loss++ for the heals"
+	local reason = reasonStart and CleanReason(message:sub(reasonStart))
+	local giver = NormalizeName(sender)
+	local now = GetServerTime()
+
+	for _, properName in ipairs(mentions) do
+		-- Skip repeats within the cooldown so karma can't be spammed
+		if RecordEvent(giver, NormalizeName(properName), now, reason) then
+			-- Only announce if this is OUR character receiving karma
+			local shouldAnnounce = (properName:lower() == myName:lower())
+			AddKarma(properName, shouldAnnounce)
 		end
 	end
 end
@@ -502,6 +703,7 @@ local function OnEvent(self, event, ...)
 			C_Timer.After(3, function()
 				local guildName = GetGuildInfo("player")
 				if guildName then
+					PruneEvents()
 					Print("Auto-syncing karma data...")
 					RequestSync()
 				end
@@ -516,6 +718,12 @@ local function OnEvent(self, event, ...)
 		ParseMessage(message, sender)
 	elseif event == "GUILD_ROSTER_UPDATE" then
 		NotifyChanged()
+	elseif event == "PLAYER_LOGOUT" then
+		-- Remember when we left, so next login only asks for history we missed
+		local guildName = InitializeGuildDB()
+		if guildName then
+			GuildKarmaMetaDB[guildName].lastOnline = GetServerTime()
+		end
 	elseif event == "CHAT_MSG_ADDON" then
 		local prefix, message, channel, sender = ...
 
@@ -538,6 +746,21 @@ local function OnEvent(self, event, ...)
 						ExtendSyncWindow()
 					end
 				end
+			elseif message:match("^EVENTREQ:%d+$") then
+				-- Someone wants karma history since a time; our own request echoes back too
+				if ShortName(sender):lower() ~= UnitName("player"):lower() then
+					for _, chunk in ipairs(SerializeEventChunks(tonumber(message:match("^EVENTREQ:(%d+)$")))) do
+						QueueAddonMessage("EVENTS:" .. chunk)
+					end
+				end
+			elseif message:match("^EVENTS:") then
+				local data = message:match("^EVENTS:(.+)$")
+				if data then
+					MergeEvents(data)
+					if isSyncing then
+						ExtendSyncWindow()
+					end
+				end
 			elseif message:match("^RESET:%d+$") then
 				-- The guild leader reset all karma
 				if ApplyReset(tonumber(message:match("^RESET:(%d+)$"))) then
@@ -554,21 +777,24 @@ frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("CHAT_MSG_GUILD")
 frame:RegisterEvent("GUILD_ROSTER_UPDATE")
 frame:RegisterEvent("CHAT_MSG_ADDON")
+frame:RegisterEvent("PLAYER_LOGOUT")
 frame:SetScript("OnEvent", OnEvent)
 
 -- Register addon message prefix for syncing
 C_ChatInfo.RegisterAddonMessagePrefix(SYNC_PREFIX)
 
--- Karma holders sorted highest first, each with a place. Tied karma shares
--- a place (1, 2, 2, 4); players with no karma aren't ranked.
-local function BuildLeaderboard()
-	local guildName = InitializeGuildDB()
-	if not guildName then
-		return {}
-	end
+-- Leaderboard periods, shown in the karma window and accepted by /gk report
+local PERIODS = {
+	{ label = "All time" },
+	{ label = "Last 30 days", key = "month", days = 30 },
+	{ label = "Last 7 days", key = "week", days = 7 },
+}
 
+-- Karma holders (all time, or over the last `days` days) sorted highest first, each
+-- with a place. Tied karma shares a place (1, 2, 2, 4); players with no karma aren't ranked.
+local function BuildLeaderboard(days)
 	local leaderboard = {}
-	for name, karma in pairs(GuildKarmaDB[guildName]) do
+	for name, karma in pairs(GetKarmaCounts(days)) do
 		if karma > 0 then
 			table.insert(leaderboard, { name = name, karma = karma })
 		end
@@ -589,21 +815,21 @@ local function BuildLeaderboard()
 	return leaderboard
 end
 
--- Post the top 10 karma holders to guild chat
-local function ReportTop10()
+-- Post the top 10 karma holders (all time, or over the last `days` days) to guild chat
+local function ReportTop10(days)
 	if not InitializeGuildDB() then
 		Print("You must be in a guild to use this addon.")
 		return
 	end
 
-	local leaderboard = BuildLeaderboard()
+	local leaderboard = BuildLeaderboard(days)
 	if #leaderboard == 0 then
-		SendChat("No karma recorded yet!", "GUILD")
+		SendChat(days and "No karma in the last " .. days .. " days!" or "No karma recorded yet!", "GUILD")
 		return
 	end
 
 	-- Send header immediately
-	SendChat("=== Top 10 Karma Holders ===", "GUILD")
+	SendChat(days and "=== Top 10 Karma: Last " .. days .. " Days ===" or "=== Top 10 Karma Holders ===", "GUILD")
 
 	-- Send each entry with a 0.5 second delay
 	local delay = 0.5
@@ -644,6 +870,46 @@ local function ShowKarma(playerName)
 	end
 end
 
+-- How long ago a server time was, e.g. "5m", "3h", "2d"
+local function FormatAgo(t)
+	local seconds = math.max(0, GetServerTime() - t)
+	if seconds < 3600 then
+		return math.max(1, math.floor(seconds / 60)) .. "m"
+	elseif seconds < DAY then
+		return math.floor(seconds / 3600) .. "h"
+	end
+	return math.floor(seconds / DAY) .. "d"
+end
+
+-- One line describing a karma event, e.g. "Bob -> Cut Loss (2h ago): for the heals"
+local function DescribeEvent(event)
+	local line = event.from .. " -> " .. event.to .. " (" .. FormatAgo(event.t) .. " ago)"
+	if event.reason then
+		line = line .. ": " .. event.reason
+	end
+	return line
+end
+
+-- Print recent karma events for the guild or one player
+local function ShowHistory(playerName)
+	if not InitializeGuildDB() then
+		Print("You must be in a guild to use this addon.")
+		return
+	end
+
+	local name = playerName and NormalizeName(playerName)
+	local history = GetHistory(name, 10)
+	if #history == 0 then
+		Print(name and "No recent karma for " .. name .. "." or "No recent karma.")
+		return
+	end
+
+	Print(name and "Recent karma for " .. name .. ":" or "Recent karma:")
+	for _, event in ipairs(history) do
+		print("  " .. DescribeEvent(event))
+	end
+end
+
 -- Slash command handler
 local function SlashCommandHandler(msg)
 	msg = msg:trim()
@@ -655,10 +921,14 @@ local function SlashCommandHandler(msg)
 		print("  /gk - Show top 10 karma holders")
 		print("  /gk <playername> - Show karma for specific player")
 		print("  /gk report - Report top 10 to guild chat")
+		print("  /gk report week | month - Report the top 10 for the last 7 or 30 days")
 		print("  /gk report <playername> - Report specific player's karma to guild chat")
+		print("  /gk history [playername] - Show recent karma and the reasons given")
 		print("  /gk sync - Sync karma data with other guild members")
 		print("  /gk debug <name> - Test if a name is found in guild roster")
 		print("  /gk reset - Reset all karma for the guild (guild leader only)")
+		print("Add a reason after ++, e.g. 'Name++ for the heals'. The same person can")
+		print("  give the same player karma once every " .. KARMA_COOLDOWN / 60 .. " minutes")
 		print("Guild members can type 'guildkarma' in guild chat to check their karma")
 		print("Guild members can type 'gk update' in guild chat to trigger a sync")
 	elseif msg == "ui" then
@@ -686,9 +956,19 @@ local function SlashCommandHandler(msg)
 				Print("Try typing: /gk debug YourExactCharacterName")
 			end
 		end
+	elseif msg == "history" or msg:match("^history%s+") then
+		ShowHistory(msg:match("^history%s+(.+)$"))
 	elseif msg:match("^report") then
 		local playerName = msg:match("^report%s+(.+)$")
-		if playerName and playerName ~= "" then
+		local period = nil
+		for _, p in ipairs(PERIODS) do
+			if p.key and playerName == p.key then
+				period = p
+			end
+		end
+		if period then
+			ReportTop10(period.days)
+		elseif playerName and playerName ~= "" then
 			-- Report specific player to guild chat
 			ReportKarma(playerName)
 		else
@@ -715,6 +995,11 @@ ns.SetKarma = SetKarma
 ns.ResetAllKarma = ResetAllKarma
 ns.BuildLeaderboard = BuildLeaderboard
 ns.ReportTop10 = ReportTop10
+ns.PERIODS = PERIODS
+ns.GetKarmaCounts = GetKarmaCounts
+ns.GetHistory = GetHistory
+ns.FormatAgo = FormatAgo
+ns.IsGuildMember = IsGuildMember
 
 -- Karma table for the current guild, or nil when not in a guild
 function ns.GetGuildDB()
