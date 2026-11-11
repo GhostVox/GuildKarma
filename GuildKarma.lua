@@ -69,10 +69,13 @@ local function InitializeGuildDB()
 	return guildName
 end
 
--- Normalize a player name: remove server name, capitalize first letter
+-- Normalize a player name: remove server name, capitalize the first letter of
+-- each word (Forever names can have several words, e.g. "Cut Loss")
 local function NormalizeName(playerName)
-	playerName = playerName:gsub("%-.*", "")
-	return playerName:sub(1, 1):upper() .. playerName:sub(2):lower()
+	playerName = playerName:gsub("%-.*", ""):lower()
+	return (playerName:gsub("(%S)(%S*)", function(first, rest)
+		return first:upper() .. rest
+	end))
 end
 
 -- Let the UI know karma data or the roster changed
@@ -132,6 +135,28 @@ local function IsGuildMember(playerName)
 	end
 
 	return false, nil
+end
+
+-- Most words a player name can have (Forever names have a first and last name)
+local MAX_NAME_WORDS = 3
+
+-- Find the guild member named at the end of some text, trying the longest run of
+-- trailing words first so "thanks Cut Loss" matches "Cut Loss" rather than "Loss"
+local function FindMentionedMember(text)
+	local words = {}
+	for word in text:gmatch("%S+") do
+		table.insert(words, word)
+	end
+
+	for count = math.min(MAX_NAME_WORDS, #words), 1, -1 do
+		local candidate = table.concat(words, " ", #words - count + 1, #words)
+		local isInGuild, properName = IsGuildMember(candidate)
+		if isInGuild then
+			return properName
+		end
+	end
+
+	return nil
 end
 
 -- Report karma to guild chat
@@ -430,23 +455,28 @@ local function ParseMessage(message, sender)
 	-- Get current player name
 	local myName = UnitName("player")
 
-	-- Split message into words and check each for ++
-	for word in message:gmatch("%S+") do
-		-- Check if this word ends with ++
-		-- Updated pattern to match any non-whitespace characters followed by ++
-		local playerName = word:match("^([^%s%+]+)%+%+$")
+	-- Find each "++" that ends a word and credit the guild member named just before it
+	local searchFrom = 1
+	while true do
+		local plusStart, plusEnd = message:find("%+%+", searchFrom)
+		if not plusStart then
+			break
+		end
 
-		if playerName then
-			-- Check if player is trying to give karma to themselves
-			if playerName:lower() == normalizedSender then
-				-- Silently ignore self-karma attempts
-				return
-			end
+		local before = message:sub(searchFrom, plusStart - 1)
+		local after = message:sub(plusEnd + 1, plusEnd + 1)
+		searchFrom = plusEnd + 1
 
-			-- Check if the mentioned player is in the guild
-			local isInGuild, properName = IsGuildMember(playerName)
+		if before:match("[^%s%+]$") and (after == "" or after:match("%s")) then
+			local properName = FindMentionedMember(before)
 
-			if isInGuild and properName then
+			if properName then
+				-- Check if player is trying to give karma to themselves
+				if properName:lower() == normalizedSender then
+					-- Silently ignore self-karma attempts
+					return
+				end
+
 				-- Only announce if this is OUR character receiving karma
 				local shouldAnnounce = (properName:lower() == myName:lower())
 				AddKarma(properName, shouldAnnounce)
