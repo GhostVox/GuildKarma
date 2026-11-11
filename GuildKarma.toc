@@ -1,4 +1,4 @@
-## Interface: 120100, 50504, 40402, 38002, 20506, 16001, 11509
+## Interface: 120105, 120107, 50504, 40402, 38002, 20506, 16001, 11509
 ## Title: Guild Karma
 ## Notes: Tracks guild member karma through ++ mentions in guild chat
 ## Author: Ghostvox
