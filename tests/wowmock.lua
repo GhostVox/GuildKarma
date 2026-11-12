@@ -461,6 +461,8 @@ local function BuildEnvironment(world, client)
 	}
 	env.C_GuildInfo = { GuildRoster = noop }
 
+	env.date = os.date
+	env.time = os.time
 	env.GetServerTime = function()
 		return world.time
 	end

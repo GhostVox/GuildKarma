@@ -6,6 +6,16 @@ Track and celebrate your guild members' contributions with a simple karma system
 
 Guild Karma is a fun, lightweight addon that lets guild members give recognition to each other through a simple "++" system. When someone does something awesome, just type their name followed by ++ in guild chat and they'll earn karma!
 
+## Screenshots
+
+| Leaderboard | Activity |
+| :---: | :---: |
+| <img src="docs/screenshots/leaderboard.png" width="380" alt="Leaderboard tab: guild members ranked by karma with class icons and ranks"> | <img src="docs/screenshots/activity.png" width="380" alt="Activity tab: who gave karma to whom, and why"> |
+| **Professions** | **Karma Shop** |
+| <img src="docs/screenshots/professions.png" width="380" alt="Professions tab: guild members grouped by profession with skill levels"> | <img src="docs/screenshots/shop.png" width="380" alt="Shop tab: items for sale and a pending request awaiting officer approval"> |
+| **Schedule a run** | **Sign up by role** |
+| <img src="docs/screenshots/events-schedule.png" width="380" alt="Events tab: scheduling a dungeon with day, time and role slots"> | <img src="docs/screenshots/events-signup.png" width="380" alt="Events tab: an event's page with Tank, Healer and DPS signup"> |
+
 ## Features
 
 ✨ **Simple Recognition System**
@@ -54,6 +64,12 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - Search by profession or member name
 - Shared automatically by members running the addon, including offline members
 
+📅 **Dungeon & Raid Events**
+- Schedule runs and sign up with `/gk events`
+- Anyone can post a dungeon or raid with a time, role slots and a note
+- Sign up as Tank, Healer or DPS; extra signups go to a bench and move up when someone drops out
+- Reminders 15 minutes before runs you're going to
+
 👑 **Guild Leader Management**
 - The guild leader can raise, lower, or set any member's karma from the window
 - Reset karma for the whole guild with one click
@@ -70,6 +86,7 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - `/gk ui` - Open the karma window
 - `/gk shop` - Spend karma on guild bank items
 - `/gk professions` - See who in the guild has which profession
+- `/gk events` - Schedule dungeons and raids, and sign up
 - `/gk minimap` - Show or hide the minimap button
 - `/gk` - View top 10 karma holders (private)
 - `/gk PlayerName` - Check specific player's karma (private)
