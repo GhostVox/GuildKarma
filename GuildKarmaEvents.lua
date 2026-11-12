@@ -721,7 +721,9 @@ end
 local function RefreshDetail(event)
 	page.detailTitle:SetText(event.title .. "  |cff888888" .. event.kindLabel .. "|r")
 	page.detailWhen:SetText(FormatWhen(event.t) .. "   |cff888888Led by|r " .. W.ColoredName(event.leader))
-	page.detailNote:SetText(event.note ~= "" and event.note or "")
+	page.detailNote:SetText(event.note)
+	-- Without a note, move the signup controls up into its space
+	page.signupArea:SetPoint("TOPLEFT", 0, event.note ~= "" and -94 or -80)
 	page.editButton:SetShown(event.canEdit)
 	page.deleteButton:SetShown(event.canEdit)
 
@@ -734,7 +736,7 @@ local function RefreshDetail(event)
 	for status, button in pairs(page.statusButtons) do
 		SetSelected(button, event.mine and event.mine.status == status)
 	end
-	page.myStatus:SetText(event.myStatus and MY_STATUS_TEXT[event.myStatus] or "Pick a role, then sign up")
+	page.myStatus:SetText(event.myStatus and MY_STATUS_TEXT[event.myStatus] or "Pick your role, then Going")
 
 	-- Roster: each role with its open slots, then bench, maybe and can't go
 	local lines = {}
@@ -857,7 +859,11 @@ ns.AddTab("Events", function(parent)
 	page.detailNote:SetPoint("RIGHT", -14, 0)
 	page.detailNote:SetJustifyH("LEFT")
 
-	AddLabel(view, "Role", 14, -102)
+	page.signupArea = CreateFrame("Frame", nil, view)
+	page.signupArea:SetPoint("BOTTOMRIGHT")
+	view = page.signupArea
+
+	AddLabel(view, "Role", 14, -8)
 	page.roleButtons = {}
 	local previous
 	for _, role in ipairs(ROLES) do
@@ -865,7 +871,7 @@ ns.AddTab("Events", function(parent)
 		if previous then
 			button:SetPoint("LEFT", previous, "RIGHT", 4, 0)
 		else
-			button:SetPoint("TOPLEFT", 60, -98)
+			button:SetPoint("TOPLEFT", 60, -4)
 		end
 		button:SetScript("OnClick", function()
 			selectedRole = role
@@ -881,7 +887,7 @@ ns.AddTab("Events", function(parent)
 		previous = button
 	end
 
-	AddLabel(view, "I'm", 14, -130)
+	AddLabel(view, "I'm", 14, -36)
 	page.statusButtons = {}
 	previous = nil
 	for _, status in ipairs({ "going", "maybe", "no" }) do
@@ -890,7 +896,7 @@ ns.AddTab("Events", function(parent)
 		if previous then
 			button:SetPoint("LEFT", previous, "RIGHT", 4, 0)
 		else
-			button:SetPoint("TOPLEFT", 60, -126)
+			button:SetPoint("TOPLEFT", 60, -32)
 		end
 		button:SetScript("OnClick", function()
 			ns.SignUp(selectedId, selectedRole, status)
@@ -904,12 +910,12 @@ ns.AddTab("Events", function(parent)
 	local divider = view:CreateTexture(nil, "ARTWORK")
 	W.SetColor(divider, W.COLOR_BORDER)
 	divider:SetHeight(1)
-	divider:SetPoint("TOPLEFT", 10, -158)
-	divider:SetPoint("TOPRIGHT", -10, -158)
+	divider:SetPoint("TOPLEFT", 10, -64)
+	divider:SetPoint("TOPRIGHT", -10, -64)
 
 	local rosterScroll
 	rosterScroll, page.rosterContent = W.CreateScrollList(view, "GuildKarmaEventRosterScroll")
-	rosterScroll:SetPoint("TOPLEFT", 10, -164)
+	rosterScroll:SetPoint("TOPLEFT", 10, -70)
 	rosterScroll:SetPoint("BOTTOMRIGHT", -24, 4)
 
 	page.Refresh = RefreshEvents

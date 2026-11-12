@@ -748,7 +748,8 @@ local function Refresh()
 
 	ui.report:SetShown(tab == 1)
 	ui.report:SetText("Post Top 10")
-	ui.resetAll:SetShown(ns.CanManage())
+	-- Reset All clears karma, so keep it with the leaderboard, not the other tabs
+	ui.resetAll:SetShown(tab == 1 and ns.CanManage())
 end
 
 tabs[1] = { label = "Leaderboard", create = CreateLeaderboardPage }
