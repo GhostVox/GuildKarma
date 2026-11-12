@@ -6,6 +6,16 @@ Track and celebrate your guild members' contributions with a simple karma system
 
 Guild Karma is a fun, lightweight addon that lets guild members give recognition to each other through a simple "++" system. When someone does something awesome, just type their name followed by ++ in guild chat and they'll earn karma!
 
+## Screenshots
+
+| Leaderboard | Activity |
+| :---: | :---: |
+| <img src="docs/screenshots/leaderboard.png" width="380" alt="Leaderboard tab: guild members ranked by karma with class icons and ranks"> | <img src="docs/screenshots/activity.png" width="380" alt="Activity tab: who gave karma to whom, and why"> |
+| **Professions** | **Karma Shop** |
+| <img src="docs/screenshots/professions.png" width="380" alt="Professions tab: guild members grouped by profession with skill levels"> | <img src="docs/screenshots/shop.png" width="380" alt="Shop tab: items for sale and a pending request awaiting officer approval"> |
+| **Schedule a run** | **Sign up by role** |
+| <img src="docs/screenshots/events-schedule.png" width="380" alt="Events tab: scheduling a dungeon with day, time and role slots"> | <img src="docs/screenshots/events-signup.png" width="380" alt="Events tab: an event's page with Tank, Healer and DPS signup"> |
+
 ## Features
 
 ✨ **Simple Recognition System**
