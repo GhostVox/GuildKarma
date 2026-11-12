@@ -882,6 +882,216 @@ test("guild members' tooltips show their karma", function()
 end)
 
 ---------------------------------------------------------------------------
+-- Dungeon and raid events
+---------------------------------------------------------------------------
+
+local HOUR = 3600
+
+-- Cut Loss schedules a run (a dungeon two hours from now unless told otherwise)
+local function NewEvent(world, fields)
+	fields = fields or {}
+	local id = world.clients["Cut Loss"].ns.SaveEvent(nil, {
+		title = fields.title or "Deadmines",
+		kind = fields.kind or "dungeon",
+		t = fields.t or (world.time + 2 * HOUR),
+		tanks = fields.tanks,
+		healers = fields.healers,
+		dps = fields.dps,
+		note = fields.note,
+	})
+	world:Advance(10)
+	return id
+end
+
+local function Names(entries)
+	local names = {}
+	for _, entry in ipairs(entries) do
+		table.insert(names, entry.name)
+	end
+	return table.concat(names, ", ")
+end
+
+-- Whether a client printed a line containing text
+local function Printed(world, name, text)
+	for _, line in ipairs(world.clients[name].log) do
+		if line:find(text, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+local function SignUp(world, name, id, role, status)
+	world.clients[name].ns.SignUp(id, role, status)
+	world:Advance(5)
+end
+
+test("anyone can schedule a run and the guild is told", function()
+	local world = NewGuild()
+	NewEvent(world, { note = "meet at the stone" })
+
+	for _, name in ipairs(ADDON_USERS) do
+		local events = world.clients[name].ns.GetEvents()
+		eq(#events, 1, name .. "'s events")
+		eq(events[1].title, "Deadmines")
+		eq(events[1].note, "meet at the stone")
+		eq(events[1].leader, "Cut Loss")
+		eq(events[1].tanks .. "/" .. events[1].healers .. "/" .. events[1].dps, "1/1/3", "dungeon slots")
+	end
+	ok(Printed(world, "Vrani", "Cut Loss scheduled Deadmines (dungeon)"), "Vrani is told")
+	ok(not Printed(world, "Cut Loss", "scheduled Deadmines"), "the leader isn't told about their own run")
+end)
+
+test("signups fill each role in order and extras go to the bench", function()
+	local world = NewGuild()
+	local id = NewEvent(world, { tanks = 1, healers = 1, dps = 1 })
+	SignUp(world, "Ghostvox", id, "tank", "going")
+	SignUp(world, "Vrani", id, "dps", "going")
+	SignUp(world, "Cut Loss", id, "dps", "going")
+
+	local event = world.clients["Ghostvox"].ns.GetEvent(id)
+	eq(Names(event.roles.tank), "Ghostvox")
+	eq(Names(event.roles.dps), "Vrani")
+	eq(Names(event.bench), "Cut Loss", "third DPS is benched")
+	eq(world.clients["Cut Loss"].ns.GetEvent(id).myStatus, "bench")
+
+	-- Vrani drops out, so Cut Loss moves up
+	SignUp(world, "Vrani", id, "dps", "no")
+	event = world.clients["Ghostvox"].ns.GetEvent(id)
+	eq(Names(event.roles.dps), "Cut Loss")
+	eq(Names(event.no), "Vrani")
+	eq(#event.bench, 0)
+
+	-- Vrani might come after all, but as a healer
+	SignUp(world, "Vrani", id, "healer", "maybe")
+	event = world.clients["Cut Loss"].ns.GetEvent(id)
+	eq(Names(event.maybe), "Vrani")
+	eq(#event.roles.healer, 0, "maybe doesn't take a slot")
+end)
+
+test("the run's leader is told who signs up", function()
+	local world = NewGuild()
+	local id = NewEvent(world)
+	SignUp(world, "Vrani", id, "healer", "going")
+	SignUp(world, "Ghostvox", id, "tank", "no")
+
+	ok(Printed(world, "Cut Loss", "Vrani signed up as Healer for Deadmines"), "going")
+	ok(Printed(world, "Cut Loss", "Ghostvox can't make it for Deadmines"), "can't go")
+end)
+
+test("only the run's leader and officers can change or cancel it", function()
+	local world = NewGuild()
+	local id = NewEvent(world)
+	SignUp(world, "Vrani", id, "dps", "going")
+
+	local vrani = world.clients["Vrani"].ns
+	vrani.SaveEvent(id, { title = "Hacked", kind = "raid", t = world.time + HOUR })
+	vrani.DeleteEvent(id)
+	world:Advance(10)
+	eq(world.clients["Cut Loss"].ns.GetEvent(id).title, "Deadmines", "members can't edit others' runs")
+
+	world.clients["Cut Loss"].ns.SaveEvent(id, { title = "Deadmines (normal)", kind = "dungeon", t = world.time + 3 * HOUR })
+	world:Advance(10)
+	eq(vrani.GetEvent(id).title, "Deadmines (normal)", "the leader can edit")
+
+	world.clients["Ghostvox"].ns.DeleteEvent(id)
+	world:Advance(10)
+	for _, name in ipairs(ADDON_USERS) do
+		eq(#world.clients[name].ns.GetEvents(), 0, name .. " sees it cancelled")
+	end
+	ok(Printed(world, "Vrani", "Deadmines (normal) on"), "signed-up members are told")
+end)
+
+test("past times and empty names are rejected", function()
+	local world = NewGuild()
+	local cut = world.clients["Cut Loss"].ns
+	eq(cut.SaveEvent(nil, { title = "Deadmines", kind = "dungeon", t = world.time - HOUR }), nil)
+	eq(cut.SaveEvent(nil, { title = "  ", kind = "dungeon", t = world.time + HOUR }), nil)
+	eq(#cut.GetEvents(), 0)
+end)
+
+test("members who log in later get runs and signups", function()
+	local world = NewGuild()
+	local id = NewEvent(world, { kind = "raid", title = "Molten Core" })
+	SignUp(world, "Vrani", id, "healer", "going")
+
+	world:AddMember("Newbie")
+	world:Login("Newbie")
+	world:Advance(60)
+	local event = world.clients["Newbie"].ns.GetEvent(id)
+	ok(event, "Newbie sees the raid")
+	eq(Names(event.roles.healer), "Vrani")
+end)
+
+test("a signup made with nobody else online reaches the guild later", function()
+	local world = NewGuild()
+	local id = NewEvent(world)
+	world:Logout("Ghostvox")
+	world:Logout("Vrani")
+	SignUp(world, "Cut Loss", id, "tank", "going")
+	world:Logout("Cut Loss")
+
+	world:Login("Vrani")
+	world:Advance(60)
+	world:Login("Cut Loss")
+	world:Advance(60)
+	eq(Names(world.clients["Vrani"].ns.GetEvent(id).roles.tank), "Cut Loss")
+end)
+
+test("players going are reminded 15 minutes before the start", function()
+	local world = NewGuild()
+	local id = NewEvent(world, { t = world.time + 25 * MINUTE })
+	SignUp(world, "Vrani", id, "dps", "going")
+	SignUp(world, "Ghostvox", id, "tank", "maybe")
+
+	world:Advance(5 * MINUTE)
+	ok(not Printed(world, "Vrani", "starts in"), "not yet")
+	world:Advance(6 * MINUTE)
+	ok(Printed(world, "Vrani", "Deadmines starts in"), "going")
+	ok(Printed(world, "Cut Loss", "Deadmines starts in"), "leader")
+	ok(not Printed(world, "Ghostvox", "starts in"), "maybe isn't reminded")
+end)
+
+test("old runs leave the list and are cleaned up", function()
+	local world = NewGuild()
+	local id = NewEvent(world, { t = world.time + HOUR })
+	SignUp(world, "Vrani", id, "dps", "going")
+
+	world:Advance(5 * HOUR)
+	eq(#world.clients["Vrani"].ns.GetEvents(), 0, "gone from the list a few hours after it starts")
+
+	world:Advance(3 * DAY)
+	world:Logout("Vrani")
+	world:Login("Vrani")
+	world:Advance(60)
+	local meta = world.clients["Vrani"].ns.GetGuildMeta()
+	eq(next(meta.calEvents), nil, "event pruned")
+	eq(next(meta.calSignups), nil, "signups pruned")
+end)
+
+test("the Events tab schedules a run and signs up", function()
+	local world = NewGuild()
+	local vrani = world.clients["Vrani"]
+	vrani.ns.ShowTab("Events")
+	world:FindButton("Vrani", "Schedule"):Click()
+	vrani.env.GuildKarmaEventDialog.nameBox:SetText("Ragefire Chasm")
+	world:FindButton("Vrani", "Raid"):Click()
+	world:FindButton("Vrani", "Save"):Click()
+	world:Advance(10)
+
+	local event = world.clients["Ghostvox"].ns.GetEvents()[1]
+	eq(event.title, "Ragefire Chasm")
+	eq(event.kind, "raid")
+	eq(event.leader, "Vrani")
+	ok(event.t > world.time, "starts in the future")
+
+	world:FindButton("Vrani", "Healer"):Click()
+	world:FindButton("Vrani", "Going"):Click()
+	world:Advance(10)
+	eq(Names(world.clients["Ghostvox"].ns.GetEvent(event.id).roles.healer), "Vrani")
+end)
+
+---------------------------------------------------------------------------
 
 local failures = 0
 for _, t in ipairs(tests) do

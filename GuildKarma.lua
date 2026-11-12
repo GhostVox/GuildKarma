@@ -967,6 +967,7 @@ local function SlashCommandHandler(msg)
 		print("  /gk ui - Open the karma window")
 		print("  /gk shop - Spend karma on guild bank items")
 		print("  /gk professions - See who in the guild has which profession")
+		print("  /gk events - Schedule dungeons and raids, and sign up")
 		print("  /gk minimap - Show or hide the minimap button")
 		print("  /gk - Show top 10 karma holders")
 		print("  /gk <playername> - Show karma for specific player")
@@ -988,6 +989,8 @@ local function SlashCommandHandler(msg)
 		ns.ShowTab("Shop")
 	elseif msg == "professions" or msg == "prof" then
 		ns.ShowTab("Professions")
+	elseif msg == "events" or msg == "calendar" then
+		ns.ShowTab("Events")
 	elseif msg == "minimap" then
 		ns.ToggleMinimapButton()
 	elseif msg == "reset" then

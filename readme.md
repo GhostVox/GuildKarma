@@ -54,6 +54,12 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - Search by profession or member name
 - Shared automatically by members running the addon, including offline members
 
+📅 **Dungeon & Raid Events**
+- Schedule runs and sign up with `/gk events`
+- Anyone can post a dungeon or raid with a time, role slots and a note
+- Sign up as Tank, Healer or DPS; extra signups go to a bench and move up when someone drops out
+- Reminders 15 minutes before runs you're going to
+
 👑 **Guild Leader Management**
 - The guild leader can raise, lower, or set any member's karma from the window
 - Reset karma for the whole guild with one click
@@ -70,6 +76,7 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - `/gk ui` - Open the karma window
 - `/gk shop` - Spend karma on guild bank items
 - `/gk professions` - See who in the guild has which profession
+- `/gk events` - Schedule dungeons and raids, and sign up
 - `/gk minimap` - Show or hide the minimap button
 - `/gk` - View top 10 karma holders (private)
 - `/gk PlayerName` - Check specific player's karma (private)

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0
+
+### New
+- **Dungeon and raid events** (`/gk events`): schedule a run and let guildies sign up
+  - Anyone can schedule a dungeon or raid with a day, time, role slots and a note
+  - Sign up as Tank, Healer or DPS, and say you're going, might come or can't go
+  - Roles fill in signup order; once a role is full, extra signups wait on the bench and move up if someone drops out
+  - The guild is told about new runs, the run's leader about signups, and everyone going gets a reminder 15 minutes before the start
+  - The run's leader and officers can edit or cancel it; signed-up players are told if it's cancelled
+  - Times show in each player's own time zone
+
 ## 1.4.0
 
 ### New
