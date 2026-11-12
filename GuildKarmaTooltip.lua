@@ -43,11 +43,10 @@ local function OnUnitTooltip(tooltip)
 
 	local isPlayer = UnitIsPlayer(unit)
 	local inGuild = UnitIsInMyGuild(unit)
-	local name = UnitName(unit)
-	if IsSecret(isPlayer) or IsSecret(inGuild) or IsSecret(name) or not isPlayer or not inGuild then
+	if IsSecret(isPlayer) or IsSecret(inGuild) or not isPlayer or not inGuild or IsSecret(UnitName(unit)) then
 		return false
 	end
-	return AddKarmaLine(tooltip, name)
+	return AddKarmaLine(tooltip, ns.UnitRosterName(unit))
 end
 
 if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and Enum.TooltipDataType then

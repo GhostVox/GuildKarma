@@ -29,6 +29,11 @@ local editFlushTimer = nil
 -- Lowercased short names of guild members seen running the addon this session
 local addonUsers = {}
 
+-- Addon message handlers registered by feature files, keyed by message type
+-- ("PROF" handles "PROF:..."), and functions run when we request a sync
+local messageHandlers = {}
+local syncHooks = {}
+
 -- Frame for event handling
 local frame = CreateFrame("Frame")
 
@@ -303,12 +308,45 @@ local function IsOnline(key)
 	return false
 end
 
+-- A unit's name as the guild roster shows it. On Forever, UnitName can return just
+-- the first word of a two-word name ("Lunä" for "Lunä Atrix").
+local function UnitRosterName(unit)
+	local unitName = UnitName(unit)
+	local guid = UnitGUID and UnitGUID(unit)
+	local lower = unitName:lower()
+	local firstWordMatch
+	for i = 1, GetNumGuildMembers() do
+		local fullName, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, memberGuid = GetGuildRosterInfo(i)
+		if fullName then
+			local name = ShortName(fullName)
+			if (guid and memberGuid == guid) or name:lower() == lower then
+				return name
+			elseif not firstWordMatch and name:lower():sub(1, #lower + 1) == lower .. " " then
+				firstWordMatch = name
+			end
+		end
+	end
+	return firstWordMatch or unitName
+end
+
+-- Our own name as the guild roster shows it
+local function PlayerName()
+	return UnitRosterName("player")
+end
+
+-- Whether a name (with or without realm) is our own character
+local function IsMe(name)
+	local key = ShortName(name):lower()
+	return key == UnitName("player"):lower() or key == PlayerName():lower()
+end
+
 -- Decide whether this client should handle a guild chat trigger, so only one
 -- addon user responds. If the sender runs the addon, their own client responds;
 -- otherwise the online addon user whose name sorts first responds.
 local function IsResponder(sender)
-	local senderKey = ShortName(sender):lower()
-	local myKey = UnitName("player"):lower()
+	local myKey = PlayerName():lower()
+	local senderKey = IsMe(sender) and myKey or ShortName(sender):lower()
+	addonUsers[myKey] = true
 
 	if addonUsers[senderKey] then
 		return senderKey == myKey
@@ -584,6 +622,9 @@ local function RequestSync(sendRequest)
 	if sendRequest ~= false then
 		C_ChatInfo.SendAddonMessage(SYNC_PREFIX, "REQUEST", "GUILD")
 		RequestEvents()
+		for _, hook in ipairs(syncHooks) do
+			hook()
+		end
 	end
 
 	ExtendSyncWindow()
@@ -642,9 +683,6 @@ local function ParseMessage(message, sender, isSimulated)
 	-- Normalize sender name for comparison
 	local normalizedSender = sender:gsub("%-.*", ""):lower()
 
-	-- Get current player name
-	local myName = UnitName("player")
-
 	-- Find each "++" that ends a word and the guild member named just before it
 	local mentions = {}
 	local reasonStart = nil
@@ -684,7 +722,7 @@ local function ParseMessage(message, sender, isSimulated)
 		-- Skip repeats within the cooldown so karma can't be spammed
 		if RecordEvent(giver, NormalizeName(properName), now, reason) then
 			-- Only announce if this is OUR character receiving karma
-			local shouldAnnounce = not isSimulated and (properName:lower() == myName:lower())
+			local shouldAnnounce = not isSimulated and IsMe(properName)
 			AddKarma(properName, shouldAnnounce)
 		end
 	end
@@ -696,7 +734,7 @@ local function OnEvent(self, event, ...)
 		local loadedAddon = ...
 		if loadedAddon == addonName then
 			Print("Loaded! Use /gk or /guildkarma for commands.")
-			addonUsers[UnitName("player"):lower()] = true
+			addonUsers[PlayerName():lower()] = true
 			RequestGuildRoster()
 		end
 	elseif event == "PLAYER_ENTERING_WORLD" then
@@ -752,7 +790,7 @@ local function OnEvent(self, event, ...)
 				end
 			elseif message:match("^EVENTREQ:%d+$") then
 				-- Someone wants karma history since a time; our own request echoes back too
-				if ShortName(sender):lower() ~= UnitName("player"):lower() then
+				if not IsMe(sender) then
 					for _, chunk in ipairs(SerializeEventChunks(tonumber(message:match("^EVENTREQ:(%d+)$")))) do
 						QueueAddonMessage("EVENTS:" .. chunk)
 					end
@@ -769,6 +807,12 @@ local function OnEvent(self, event, ...)
 				-- The guild leader reset all karma
 				if ApplyReset(tonumber(message:match("^RESET:(%d+)$"))) then
 					Print("All karma was reset by the guild leader.")
+				end
+			else
+				local kind, body = message:match("^(%u+):?(.*)$")
+				local handler = kind and messageHandlers[kind]
+				if handler then
+					handler(body, ShortName(sender))
 				end
 			end
 		end
@@ -921,6 +965,8 @@ local function SlashCommandHandler(msg)
 	if msg == "help" then
 		Print("Commands:")
 		print("  /gk ui - Open the karma window")
+		print("  /gk shop - Spend karma on guild bank items")
+		print("  /gk professions - See who in the guild has which profession")
 		print("  /gk minimap - Show or hide the minimap button")
 		print("  /gk - Show top 10 karma holders")
 		print("  /gk <playername> - Show karma for specific player")
@@ -938,6 +984,10 @@ local function SlashCommandHandler(msg)
 		print("Guild members can type 'gk update' in guild chat to trigger a sync")
 	elseif msg == "ui" then
 		ns.ToggleUI()
+	elseif msg == "shop" then
+		ns.ShowTab("Shop")
+	elseif msg == "professions" or msg == "prof" then
+		ns.ShowTab("Professions")
 	elseif msg == "minimap" then
 		ns.ToggleMinimapButton()
 	elseif msg == "reset" then
@@ -1017,6 +1067,31 @@ ns.GetKarmaCounts = GetKarmaCounts
 ns.GetHistory = GetHistory
 ns.FormatAgo = FormatAgo
 ns.IsGuildMember = IsGuildMember
+ns.IsOnline = IsOnline
+ns.PlayerName = PlayerName
+ns.UnitRosterName = UnitRosterName
+ns.IsMe = IsMe
+ns.NotifyChanged = NotifyChanged
+ns.NextRev = NextRev
+ns.QueueAddonMessage = QueueAddonMessage
+ns.PlainText = CleanReason
+
+-- Handle addon messages of a type, e.g. "PROF" for "PROF:...". The handler gets
+-- the text after the colon and the sender's short name.
+function ns.RegisterMessageHandler(kind, handler)
+	messageHandlers[kind] = handler
+end
+
+-- Run a function whenever we ask the guild for a sync
+function ns.OnSyncRequest(hook)
+	table.insert(syncHooks, hook)
+end
+
+-- Shared per-guild data that isn't karma totals, or nil when not in a guild
+function ns.GetGuildMeta()
+	local guildName = InitializeGuildDB()
+	return guildName and GuildKarmaMetaDB[guildName]
+end
 
 -- Karma table for the current guild, or nil when not in a guild
 function ns.GetGuildDB()
