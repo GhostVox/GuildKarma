@@ -18,8 +18,13 @@ local PROFESSION_NAMES = {
 	Skinning = true,
 	Tailoring = true,
 	Cooking = true,
+}
+
+-- Secondary skills we leave out: only main professions and Cooking are shared
+local LEFT_OUT = {
 	["First Aid"] = true,
 	Fishing = true,
+	Archaeology = true,
 }
 
 local broadcastTimer = nil
@@ -34,16 +39,17 @@ local function GetProfessionDB()
 	return meta.professions
 end
 
--- Read the player's own professions, sorted by name. Some classic-era clients have
--- GetProfessions but it returns nothing, so fall back to the skill list.
+-- Read the player's main professions and Cooking, sorted by name. Some classic-era
+-- clients have GetProfessions but it returns nothing, so fall back to the skill list.
 local function ReadOwnProfessions()
 	local list = {}
 	if GetProfessions and GetProfessionInfo then
+		-- GetProfessions returns: main 1, main 2, archaeology, fishing, cooking
 		local indexes = { GetProfessions() }
-		for i = 1, 5 do
-			if indexes[i] then
-				local name, _, rank, maxRank = GetProfessionInfo(indexes[i])
-				if name then
+		for _, slot in ipairs({ 1, 2, 5 }) do
+			if indexes[slot] then
+				local name, _, rank, maxRank = GetProfessionInfo(indexes[slot])
+				if name and not LEFT_OUT[name] then
 					table.insert(list, { name = name, rank = rank or 0, max = maxRank or 0 })
 				end
 			end
@@ -56,7 +62,7 @@ local function ReadOwnProfessions()
 			local name, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)
 			if isHeader then
 				header = name
-			elseif name and (PROFESSION_NAMES[name] or (header and (header == TRADE_SKILLS or header == SECONDARY_SKILLS))) then
+			elseif name and not LEFT_OUT[name] and (PROFESSION_NAMES[name] or (header and (header == TRADE_SKILLS or header == SECONDARY_SKILLS))) then
 				table.insert(list, { name = name, rank = rank or 0, max = maxRank or 0 })
 			end
 		end
@@ -114,7 +120,12 @@ local function UpdateOwnProfessions(forceSend)
 		return
 	end
 
-	local me = ns.NormalizeName(UnitName("player"))
+	local me = ns.NormalizeName(ns.PlayerName())
+	-- Earlier builds saved Forever players under their first name only
+	local firstName = ns.NormalizeName(UnitName("player"))
+	if firstName ~= me and db[firstName] and not ns.IsGuildMember(firstName) then
+		db[firstName] = nil
+	end
 	local list = ReadOwnProfessions()
 	local current = db[me]
 	if not current or SerializeList(current.list) ~= SerializeList(list) then
@@ -149,11 +160,11 @@ end)
 -- can't answer for themselves
 ns.RegisterMessageHandler("PROFREQ", function(_, sender)
 	local db = GetProfessionDB()
-	if not db or sender:lower() == UnitName("player"):lower() then
+	if not db or ns.IsMe(sender) then
 		return
 	end
 	UpdateOwnProfessions(true)
-	local me = ns.NormalizeName(UnitName("player"))
+	local me = ns.NormalizeName(ns.PlayerName())
 	for name, record in pairs(db) do
 		if name ~= me and not ns.IsOnline(name:lower()) then
 			SendRecord(name, record)
@@ -180,20 +191,23 @@ function ns.GetProfessionGroups()
 		local record = name and db[name]
 		if record then
 			for _, profession in ipairs(record.list) do
-				local group = byName[profession.name]
-				if not group then
-					group = { name = profession.name, members = {} }
-					byName[profession.name] = group
-					table.insert(groups, group)
+				-- Older versions also shared First Aid and Fishing; leave those out
+				if not LEFT_OUT[profession.name] then
+					local group = byName[profession.name]
+					if not group then
+						group = { name = profession.name, members = {} }
+						byName[profession.name] = group
+						table.insert(groups, group)
+					end
+					table.insert(group.members, {
+						name = ns.ShortName(fullName),
+						rank = profession.rank,
+						max = profession.max,
+						online = online,
+						classFile = classFile,
+						updated = record.updated,
+					})
 				end
-				table.insert(group.members, {
-					name = ns.ShortName(fullName),
-					rank = profession.rank,
-					max = profession.max,
-					online = online,
-					classFile = classFile,
-					updated = record.updated,
-				})
 			end
 		end
 	end

@@ -469,6 +469,49 @@ test("the skill list is used when GetProfessions returns nothing", function()
 	eq(ProfessionMembers(world, "Ghostvox", "Skinning"), "Cut Loss 40/75")
 end)
 
+test("only main professions and Cooking are shared", function()
+	local world = NewGuild()
+	LearnProfessions(world, "Cut Loss", {
+		{ "Alchemy", 78, 150 },
+		{ "First Aid", 121, 150 },
+		{ "Fishing", 20, 75 },
+		{ "Cooking", 4, 75 },
+	})
+
+	eq(ProfessionMembers(world, "Ghostvox", "Alchemy"), "Cut Loss 78/150")
+	eq(ProfessionMembers(world, "Ghostvox", "Cooking"), "Cut Loss 4/75")
+	eq(ProfessionMembers(world, "Ghostvox", "First Aid"), nil, "First Aid left out")
+	eq(ProfessionMembers(world, "Ghostvox", "Fishing"), nil, "Fishing left out")
+end)
+
+test("GetProfessions: main professions and Cooking, not archaeology or fishing", function()
+	local world = NewGuild()
+	local env = world.clients["Cut Loss"].env
+	local info = {
+		[6] = { "Alchemy", 78, 150 },
+		[7] = { "Herbalism", 94, 150 },
+		[5] = { "First Aid", 121, 150 },
+		[9] = { "Fishing", 20, 75 },
+		[8] = { "Cooking", 4, 75 },
+	}
+	-- Forever's order: main 1, main 2, archaeology slot (First Aid there), fishing, cooking
+	env.GetProfessions = function()
+		return 6, 7, 5, 9, 8
+	end
+	env.GetProfessionInfo = function(index)
+		local p = info[index]
+		return p[1], 0, p[2], p[3]
+	end
+	world:Fire(world.clients["Cut Loss"], "SKILL_LINES_CHANGED")
+	world:Advance(10)
+
+	eq(ProfessionMembers(world, "Vrani", "Alchemy"), "Cut Loss 78/150")
+	eq(ProfessionMembers(world, "Vrani", "Herbalism"), "Cut Loss 94/150")
+	eq(ProfessionMembers(world, "Vrani", "Cooking"), "Cut Loss 4/75")
+	eq(ProfessionMembers(world, "Vrani", "First Aid"), nil)
+	eq(ProfessionMembers(world, "Vrani", "Fishing"), nil)
+end)
+
 test("skill-ups replace the old professions", function()
 	local world = NewGuild()
 	LearnProfessions(world, "Cut Loss", { { "Alchemy", 250, 300 } })
@@ -486,6 +529,60 @@ test("a new addon user sees offline members' professions", function()
 	world:Login("Newbie")
 	world:Advance(60)
 	eq(ProfessionMembers(world, "Newbie", "Tailoring"), "Cut Loss 150/225")
+end)
+
+---------------------------------------------------------------------------
+-- Forever: UnitName("player") gives only the first name
+---------------------------------------------------------------------------
+
+-- Cut Loss's game reports "Cut" as their name, but the roster says "Cut Loss"
+local function NewForeverGuild()
+	local world = NewGuild()
+	world.members["Cut Loss"].unitName = "Cut"
+	return world
+end
+
+test("Forever: professions are stored under the full roster name", function()
+	local world = NewForeverGuild()
+	LearnProfessions(world, "Cut Loss", { { "Mining", 75, 150 } })
+
+	eq(ProfessionMembers(world, "Vrani", "Mining"), "Cut Loss 75/150")
+	eq(ProfessionMembers(world, "Cut Loss", "Mining"), "Cut Loss 75/150", "seen on their own client")
+end)
+
+test("Forever: a first-name record from an earlier build is dropped", function()
+	local world = NewForeverGuild()
+	local meta = world.clients["Cut Loss"].ns.GetGuildMeta()
+	meta.professions = { Cut = { updated = 1, list = { { name = "Mining", rank = 1, max = 75 } } } }
+	LearnProfessions(world, "Cut Loss", { { "Mining", 75, 150 } })
+
+	eq(meta.professions.Cut, nil)
+	eq(meta.professions["Cut Loss"].list[1].rank, 75)
+end)
+
+test("Forever: the recipient still announces their karma", function()
+	local world = NewForeverGuild()
+	world:Say("Vrani", "Cut Loss++")
+	world:Flush()
+
+	eq(#world:ChatMatching("now have"), 1, "announcements")
+	eq(world:ChatFrom("Cut Loss", "I now have 1 karma!")[1], "I now have 1 karma!")
+end)
+
+test("Forever: shop requests use the full name", function()
+	local world = NewForeverGuild()
+	local leader = world.clients["Ghostvox"].ns
+	leader.SetKarma("Cut Loss", 5)
+	leader.SaveShopItem(nil, "Flask of Titans", 3)
+	world:Advance(10)
+	local cut = world.clients["Cut Loss"].ns
+	cut.RequestShopItem(cut.GetShopItems()[1].id)
+	world:Advance(10)
+
+	local requests = world.clients["Ghostvox"].ns.GetShopRequests()
+	eq(#requests, 1, "requests")
+	eq(requests[1].player, "Cut Loss")
+	eq(cut.GetBalance("Cut Loss").available, 2, "price held from the full name's balance")
 end)
 
 ---------------------------------------------------------------------------

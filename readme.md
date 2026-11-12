@@ -50,7 +50,7 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - Spending never lowers the leaderboard: your balance is karma earned minus karma spent
 
 🛠️ **Guild Professions**
-- See who has which profession and their skill with `/gk professions`
+- See who has which main profession or Cooking, and their skill, with `/gk professions`
 - Search by profession or member name
 - Shared automatically by members running the addon, including offline members
 

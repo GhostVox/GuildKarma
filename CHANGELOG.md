@@ -9,7 +9,10 @@
   - Officers approve, then hand the item over and mark it delivered
   - Spending never lowers the leaderboard: your balance is karma earned minus karma spent
   - Officers are told about new requests, and members about decisions on theirs
-- **Professions tab** (`/gk professions`): see who in the guild has which profession and their skill, searchable by profession or name. Members running the addon share theirs automatically, and offline members' professions are passed along by whoever is online.
+- **Professions tab** (`/gk professions`): see who in the guild has which profession and their skill, searchable by profession or name. Shows main professions and Cooking. Members running the addon share theirs automatically, and offline members' professions are passed along by whoever is online.
+
+### Fixes
+- WoW Forever: the addon now recognizes your own two-word name, so you announce karma you receive, your shop requests and professions are saved under your full name, and tooltips find two-word names
 
 ## 1.3.0
 

@@ -34,7 +34,7 @@ local function GetShop()
 end
 
 local function Me()
-	return ns.NormalizeName(UnitName("player"))
+	return ns.NormalizeName(ns.PlayerName())
 end
 
 -- A new id that no other client will make: our name, the time, and a counter
@@ -123,7 +123,7 @@ end
 
 -- Another client is answering the shop sync, so we don't need to
 local function CancelSyncResponse(sender)
-	if syncResponseTimer and sender:lower() ~= UnitName("player"):lower() then
+	if syncResponseTimer and not ns.IsMe(sender) then
 		syncResponseTimer:Cancel()
 		syncResponseTimer = nil
 	end
@@ -174,7 +174,7 @@ end)
 -- Answer a shop sync with everything we know, unless another client answers first
 ns.RegisterMessageHandler("SHOPSYNC", function(_, sender)
 	local shop = GetShop()
-	if not shop or sender:lower() == UnitName("player"):lower() or syncResponseTimer then
+	if not shop or ns.IsMe(sender) or syncResponseTimer then
 		return
 	end
 	syncResponseTimer = C_Timer.NewTimer(math.random() * SYNC_BACKOFF, function()

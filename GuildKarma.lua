@@ -308,12 +308,45 @@ local function IsOnline(key)
 	return false
 end
 
+-- A unit's name as the guild roster shows it. On Forever, UnitName can return just
+-- the first word of a two-word name ("Lunä" for "Lunä Atrix").
+local function UnitRosterName(unit)
+	local unitName = UnitName(unit)
+	local guid = UnitGUID and UnitGUID(unit)
+	local lower = unitName:lower()
+	local firstWordMatch
+	for i = 1, GetNumGuildMembers() do
+		local fullName, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, memberGuid = GetGuildRosterInfo(i)
+		if fullName then
+			local name = ShortName(fullName)
+			if (guid and memberGuid == guid) or name:lower() == lower then
+				return name
+			elseif not firstWordMatch and name:lower():sub(1, #lower + 1) == lower .. " " then
+				firstWordMatch = name
+			end
+		end
+	end
+	return firstWordMatch or unitName
+end
+
+-- Our own name as the guild roster shows it
+local function PlayerName()
+	return UnitRosterName("player")
+end
+
+-- Whether a name (with or without realm) is our own character
+local function IsMe(name)
+	local key = ShortName(name):lower()
+	return key == UnitName("player"):lower() or key == PlayerName():lower()
+end
+
 -- Decide whether this client should handle a guild chat trigger, so only one
 -- addon user responds. If the sender runs the addon, their own client responds;
 -- otherwise the online addon user whose name sorts first responds.
 local function IsResponder(sender)
-	local senderKey = ShortName(sender):lower()
-	local myKey = UnitName("player"):lower()
+	local myKey = PlayerName():lower()
+	local senderKey = IsMe(sender) and myKey or ShortName(sender):lower()
+	addonUsers[myKey] = true
 
 	if addonUsers[senderKey] then
 		return senderKey == myKey
@@ -650,9 +683,6 @@ local function ParseMessage(message, sender, isSimulated)
 	-- Normalize sender name for comparison
 	local normalizedSender = sender:gsub("%-.*", ""):lower()
 
-	-- Get current player name
-	local myName = UnitName("player")
-
 	-- Find each "++" that ends a word and the guild member named just before it
 	local mentions = {}
 	local reasonStart = nil
@@ -692,7 +722,7 @@ local function ParseMessage(message, sender, isSimulated)
 		-- Skip repeats within the cooldown so karma can't be spammed
 		if RecordEvent(giver, NormalizeName(properName), now, reason) then
 			-- Only announce if this is OUR character receiving karma
-			local shouldAnnounce = not isSimulated and (properName:lower() == myName:lower())
+			local shouldAnnounce = not isSimulated and IsMe(properName)
 			AddKarma(properName, shouldAnnounce)
 		end
 	end
@@ -704,7 +734,7 @@ local function OnEvent(self, event, ...)
 		local loadedAddon = ...
 		if loadedAddon == addonName then
 			Print("Loaded! Use /gk or /guildkarma for commands.")
-			addonUsers[UnitName("player"):lower()] = true
+			addonUsers[PlayerName():lower()] = true
 			RequestGuildRoster()
 		end
 	elseif event == "PLAYER_ENTERING_WORLD" then
@@ -760,7 +790,7 @@ local function OnEvent(self, event, ...)
 				end
 			elseif message:match("^EVENTREQ:%d+$") then
 				-- Someone wants karma history since a time; our own request echoes back too
-				if ShortName(sender):lower() ~= UnitName("player"):lower() then
+				if not IsMe(sender) then
 					for _, chunk in ipairs(SerializeEventChunks(tonumber(message:match("^EVENTREQ:(%d+)$")))) do
 						QueueAddonMessage("EVENTS:" .. chunk)
 					end
@@ -1038,6 +1068,9 @@ ns.GetHistory = GetHistory
 ns.FormatAgo = FormatAgo
 ns.IsGuildMember = IsGuildMember
 ns.IsOnline = IsOnline
+ns.PlayerName = PlayerName
+ns.UnitRosterName = UnitRosterName
+ns.IsMe = IsMe
 ns.NotifyChanged = NotifyChanged
 ns.NextRev = NextRev
 ns.QueueAddonMessage = QueueAddonMessage

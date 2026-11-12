@@ -512,7 +512,8 @@ local function BuildEnvironment(world, client)
 	end
 	env.UnitName = function(unit)
 		if unit == "player" then
-			return name
+			-- Forever: set member.unitName to the first name, which is all UnitName gives
+			return world.members[name].unitName or name
 		end
 		return client.tooltipUnitName
 	end

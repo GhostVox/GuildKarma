@@ -717,7 +717,7 @@ local function RefreshSummary()
 		return
 	end
 
-	local me = ns.NormalizeName(UnitName("player"))
+	local me = ns.NormalizeName(ns.PlayerName())
 	local place
 	for _, entry in ipairs(ns.BuildLeaderboard()) do
 		if entry.name == me then
