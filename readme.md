@@ -146,6 +146,10 @@ lua tests/run.lua
 
 Pushing a version tag (e.g. `1.3.0`) runs the tests, then packages the addon and uploads it to CurseForge and GitHub Releases. This needs a `CF_API_KEY` repository secret holding a CurseForge API token.
 
+## License
+
+Copyright (c) 2025-2026 Ghostvox. All Rights Reserved. You're welcome to use the addon, read the code and send pull requests, but please don't re-upload, fork or redistribute it. See [License](License) for details.
+
 ## Support
 
 Found a bug or have a suggestion? Leave a comment below!
