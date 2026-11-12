@@ -855,6 +855,20 @@ test("the Professions and Shop tabs work from the window", function()
 	eq(#vrani.ns.GetShopItems(), 2, "new item reaches members")
 end)
 
+test("shift-clicking an item fills the Add item box on newer clients", function()
+	local world = NewGuild()
+	local leader = world.clients["Ghostvox"]
+	-- Newer clients link items through ChatFrameUtil.InsertLink, not ChatEdit_InsertLink
+	leader.env.ChatFrameUtil = { InsertLink = function() return false end }
+	leader.env.ChatEdit_InsertLink = function() return false end
+	leader.ns.ShowTab("Shop")
+	world:FindButton("Ghostvox", "Add item"):Click()
+
+	local link = "|cffffffff|Hitem:3928::::::::24:::::|h[Superior Healing Potion]|h|r"
+	leader.env.ChatFrameUtil.InsertLink(link)
+	eq(leader.env.GuildKarmaShopDialog.itemBox:GetText(), link)
+end)
+
 test("guild members' tooltips show their karma", function()
 	local world = NewGuild()
 	world:Say("Vrani", "Cut Loss++")

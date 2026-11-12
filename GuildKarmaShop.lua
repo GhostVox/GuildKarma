@@ -457,16 +457,27 @@ local function OpenItemDialog(item)
 			dialog:Hide()
 		end)
 
-		-- Shift-clicking an item inserts its link into the focused item box
+		-- Shift-clicking an item while the dialog is open puts its link in the item box.
+		-- Newer clients call ChatFrameUtil.InsertLink, older ones ChatEdit_InsertLink,
+		-- and some bag addons only HandleModifiedItemClick, so hook all of them.
 		local function InsertLink(link)
-			if link and dialog:IsShown() and dialog.itemBox:HasFocus() then
+			if type(link) == "string" and link:find("|Hitem:") and dialog:IsShown() and not dialog.priceBox:HasFocus() then
 				dialog.itemBox:SetText(link)
+				dialog.itemBox:SetCursorPosition(0)
 			end
 		end
 		if ChatEdit_InsertLink then
 			hooksecurefunc("ChatEdit_InsertLink", InsertLink)
-		elseif ChatFrameUtil and ChatFrameUtil.InsertLink then
+		end
+		if ChatFrameUtil and ChatFrameUtil.InsertLink then
 			hooksecurefunc(ChatFrameUtil, "InsertLink", InsertLink)
+		end
+		if HandleModifiedItemClick then
+			hooksecurefunc("HandleModifiedItemClick", function(link)
+				if IsModifiedClick("CHATLINK") then
+					InsertLink(link)
+				end
+			end)
 		end
 	end
 
