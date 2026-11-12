@@ -10,31 +10,38 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 
 ✨ **Simple Recognition System**
 - Type `PlayerName++` in guild chat to give karma
+- Add a reason: `PlayerName++ for the heals`
 - Works even if not everyone has the addon installed
 - Supports special characters in names (Kaós, José, François, etc.)
+- Supports two-word names on WoW Forever (`Cut Loss++`)
 
 🛡️ **Smart Protections**
 - Prevents self-karma (no cheating!)
+- Spam protection: the same player can give the same person karma once every 5 minutes
 - Only guild members can receive karma
 - Validates all names against the guild roster
 
 📊 **Karma Tracking & Leaderboards**
-- View top 10 karma holders with `/gk` or `/gk report`
-- Check specific player karma with `/gk PlayerName`
+- All-time, last 30 days and last 7 days leaderboards
+- View top 10 karma holders with `/gk` or `/gk report` (add `week` or `month`)
+- Check specific player karma with `/gk PlayerName`, and why they got it with `/gk history PlayerName`
+- See a guild member's karma in their tooltip and in the Guild & Communities roster
 - Type `guildkarma` in guild chat to see your own karma
 
 🔄 **Multi-User Sync**
-- Sync karma data between all addon users
+- Karma and its history sync automatically when you log in
 - Type `gk update` in guild chat to sync everyone's data
-- Keeps the highest karma values to prevent data loss
-- Perfect for catching up after being offline
+- Catch up on everything you missed while offline
+- Guild leader edits and resets always win over old data
 
 🪟 **Karma Window**
-- Open with the minimap button or `/gk ui` to browse every guild member's karma
-- Drag the minimap button around the minimap; right-click it to sync
-- Search by name, sort by karma or name, class-colored names with online status
-- Leaderboard places with gold, silver, and bronze for the top three; tied karma shares a place
+- Open with the minimap button or `/gk ui`
+- Your own karma and weekly gain at a glance
+- **Leaderboard tab**: search, sort, class icons, guild ranks, and gold, silver and bronze for the top three; tied karma shares a place
+- **Activity tab**: a feed of who gave karma to whom, and why
+- Hover a member to see their recent karma and the reasons given
 - Hide members with 0 karma, and post the top 10 to guild chat with one click
+- Drag the minimap button around the minimap; right-click it to sync
 
 👑 **Guild Leader Management**
 - The guild leader can raise, lower, or set any member's karma from the window
@@ -43,7 +50,7 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 
 💬 **Clean Chat Integration**
 - Recipients automatically announce their new karma total
-- No spam - single announcements only
+- Only one addon answers chat triggers, so there's no wall of replies
 - Report leaderboards to guild chat with proper delays
 
 ## Commands
@@ -54,7 +61,9 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - `/gk` - View top 10 karma holders (private)
 - `/gk PlayerName` - Check specific player's karma (private)
 - `/gk report` - Post top 10 to guild chat (public)
+- `/gk report week` / `/gk report month` - Post the top 10 for the last 7 or 30 days (public)
 - `/gk report PlayerName` - Post specific player's karma to guild chat (public)
+- `/gk history [PlayerName]` - Show recent karma and the reasons given (private)
 - `/gk sync` - Request karma sync from other addon users
 - `/gk debug PlayerName` - Test if a name is in guild roster
 - `/gk reset` - Reset all karma for the guild (guild leader only)
@@ -62,7 +71,8 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 
 **Guild Chat Triggers:**
 - `PlayerName++` - Give karma to a player
-- `guildkarma` - Check your own karma
+- `PlayerName++ reason` - Give karma with a reason
+- `guildkarma` or `karma` - Check your own karma
 - `gk update` - Trigger a sync for everyone
 
 ## How It Works
@@ -92,6 +102,18 @@ Guild Karma is a fun, lightweight addon that lets guild members give recognition
 - Data is stored per-guild (multi-guild support)
 - Sync feature requires at least 2 people with the addon
 - More users = better coverage and more accurate karma tracking
+- Karma history is kept for 35 days; all-time totals are kept forever
+- On Retail, karma given during boss encounters may not be counted, because the game hides chat from addons during fights
+
+## Development
+
+End-to-end tests run several simulated players in a fake guild. Run them from the repository root with Lua 5.1:
+
+```
+lua tests/run.lua
+```
+
+Pushing a version tag (e.g. `1.3.0`) runs the tests, then packages the addon and uploads it to CurseForge and GitHub Releases. This needs a `CF_API_KEY` repository secret holding a CurseForge API token.
 
 ## Support
 
